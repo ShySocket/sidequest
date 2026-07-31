@@ -11,10 +11,11 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
+from .authored import Timeline, build_authored_level, write_authored
 from .decode import VideoInfo, iter_frames, probe
 from .detect import ObstacleDetector, load_detections, save_detections
 from .distance import DistanceMap, build_distance_map, find_stopped_spans
-from .level import build_level, write_level
+from .level import build_level, build_surface_segments, write_level
 from .obstacles import ObstacleConfig, extract_obstacles
 from .overlay import render as render_overlay
 from .segment import GroundSegmenter, SurfaceFrame, load_surfaces, save_surfaces
@@ -345,6 +346,58 @@ def _command_level(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_author(args: argparse.Namespace) -> int:
+    video = _resolve_video(args.video)
+    if video is None:
+        return 1
+
+    info = probe(video)
+    _describe(info, video)
+
+    surfaces_path = Path(args.surfaces).expanduser().resolve()
+    if not surfaces_path.exists():
+        print(f"error: no such surfaces file: {surfaces_path}", file=sys.stderr)
+        return 1
+    surfaces = load_surfaces(surfaces_path)
+
+    timeline_path = Path(args.timeline).expanduser().resolve()
+    if not timeline_path.exists():
+        print(f"error: no such timeline: {timeline_path}", file=sys.stderr)
+        return 1
+    timeline = Timeline.load(timeline_path)
+
+    result, distance_map, _ = _run_speed(info, args, surfaces)
+    obstacle_config = ObstacleConfig(character_column=args.character_column)
+    segments, _ = build_surface_segments(surfaces, distance_map, obstacle_config)
+
+    level = build_authored_level(
+        video,
+        info,
+        distance_map,
+        segments,
+        timeline,
+        character_column=args.character_column,
+    )
+
+    counts: dict[str, int] = {}
+    for event in level["events"]:
+        counts[event["type"]] = counts.get(event["type"], 0) + 1
+
+    print()
+    print(f"path samples         {len(level['path'])}")
+    print(f"events               {len(level['events'])}")
+    for kind, count in sorted(counts.items()):
+        print(f"  {kind:10s} {count}")
+    print(f"hidden spans         {len(level['hidden'])}")
+    for span in level["hidden"]:
+        print(f"  {span['startTime']:.1f}s -> {span['endTime']:.1f}s")
+
+    output = Path(args.output).expanduser().resolve()
+    write_authored(output, level)
+    print(f"\nwrote {output} ({output.stat().st_size / 1e6:.2f} MB)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="analyze",
@@ -407,6 +460,19 @@ def main(argv: list[str] | None = None) -> int:
     level.add_argument("--overlay", help="render a debug overlay video here")
     level.add_argument("--overlay-stride", type=int, default=1)
     level.set_defaults(func=_command_level)
+
+    author = subparsers.add_parser(
+        "author", help="build a playable level from a hand-authored timeline"
+    )
+    author.add_argument("video", help="path to the source video")
+    author.add_argument("-o", "--output", required=True, help="write level JSON here")
+    author.add_argument("--surfaces", required=True, help="cached surfaces .npz")
+    author.add_argument("--timeline", default="timeline.json", help="authored timeline")
+    author.add_argument("--analysis-width", type=int, default=960)
+    author.add_argument("--stride", type=int, default=1)
+    author.add_argument("--min-stop-duration", type=float, default=0.5)
+    author.add_argument("--character-column", type=float, default=0.35)
+    author.set_defaults(func=_command_author)
 
     args = parser.parse_args(argv)
     return args.func(args)
