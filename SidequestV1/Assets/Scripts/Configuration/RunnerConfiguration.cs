@@ -14,19 +14,35 @@ public sealed class RunnerConfiguration : ScriptableObject
     [SerializeField, Min(0f)] private float decelerationSmoothingTime = 0.35f;
 
     [Header("GPS Validation")]
-    [SerializeField, Min(0f)] private float desiredGpsAccuracyMeters = 5f;
+    [SerializeField, Min(0f)] private float desiredGpsAccuracyMeters = 20f;
     [SerializeField, Min(0f)] private float gpsUpdateDistanceMeters = 1f;
-    [SerializeField, Min(0.1f)] private float gpsInitializationTimeoutSeconds = 20f;
+    [SerializeField, Min(0.1f)] private float gpsInitializationTimeoutSeconds = 45f;
     [SerializeField, Min(0.05f)] private float gpsPollingIntervalSeconds = 0.25f;
-    [SerializeField, Min(0f)] private float maximumAcceptedHorizontalAccuracyMeters = 25f;
+    [SerializeField, Min(0f)] private float maximumAcceptedHorizontalAccuracyMeters = 75f;
     [SerializeField, Min(0f)] private float maximumAcceptedPhysicalSpeedMetersPerSecond = 80f;
-    [SerializeField, Min(0.1f)] private float gpsStaleTimeoutSeconds = 3f;
+    [SerializeField, Min(0.1f)] private float gpsStaleTimeoutSeconds = 15f;
     [SerializeField, Min(0f)] private float stopThresholdMetersPerSecond = 0.75f;
     [SerializeField, Min(1)] private int requiredConsecutiveLowSpeedReadings = 3;
+
+    [Header("Movement Estimation")]
+    [SerializeField, Min(0.1f)] private float estimatorGpsStaleThresholdSeconds = 1.5f;
+    [SerializeField, Min(1f)] private float estimatorGpsMissingThresholdSeconds = 30f;
+    [SerializeField, Min(0f)] private float gpsReturnBlendSeconds = 1.5f;
+    [SerializeField, Range(-10f, -0.1f)] private float hardBrakingThresholdMetersPerSecondSquared = -2.3f;
+    [SerializeField, Min(0.02f)] private float hardBrakingDurationSeconds = 0.18f;
+    [SerializeField, Min(0f)] private float accelerationNoiseDeadZoneMetersPerSecondSquared = 0.2f;
+    [SerializeField, Range(0f, 1f)] private float healthyGpsWeight = 0.9f;
+    [SerializeField, Min(0.1f)] private float maximumAccelerationMetersPerSecondSquared = 8f;
+    [SerializeField, Min(0f)] private float hardStopHoldSeconds = 0.75f;
+    [SerializeField, Range(0f, 1f)] private float missingSpeedRetentionPerSecond = 0.999f;
+    [SerializeField, Range(20f, 100f)] private float motionSampleRateHertz = 50f;
 
     [Header("Gameplay")]
     [SerializeField, Min(0f)] private float maximumGameSpeed = 10f;
     [SerializeField, Min(0f)] private float jumpVelocity = 8f;
+    [SerializeField, Min(0.1f)] private float speedCurveReferenceMetersPerSecond = 30f;
+    [SerializeField, Min(0.001f)] private float speedCurveLogFactor = 0.08f;
+    [SerializeField, Range(0f, 1f)] private float speedCurveLinearWeight = 0.85f;
     [SerializeField] private AnimationCurve physicalToGameSpeedCurve = CreateDefaultCurve();
 
     public float PlaybackDelaySeconds => playbackDelaySeconds;
@@ -42,9 +58,51 @@ public sealed class RunnerConfiguration : ScriptableObject
     public float GpsStaleTimeoutSeconds => gpsStaleTimeoutSeconds;
     public float StopThresholdMetersPerSecond => stopThresholdMetersPerSecond;
     public int RequiredConsecutiveLowSpeedReadings => requiredConsecutiveLowSpeedReadings;
+    public float EstimatorGpsStaleThresholdSeconds => estimatorGpsStaleThresholdSeconds;
+    public float EstimatorGpsMissingThresholdSeconds => estimatorGpsMissingThresholdSeconds;
+    public float GpsReturnBlendSeconds => gpsReturnBlendSeconds;
+    public float HardBrakingThresholdMetersPerSecondSquared =>
+        hardBrakingThresholdMetersPerSecondSquared;
+    public float HardBrakingDurationSeconds => hardBrakingDurationSeconds;
+    public float AccelerationNoiseDeadZoneMetersPerSecondSquared =>
+        accelerationNoiseDeadZoneMetersPerSecondSquared;
+    public float HealthyGpsWeight => healthyGpsWeight;
+    public float MaximumAccelerationMetersPerSecondSquared =>
+        maximumAccelerationMetersPerSecondSquared;
+    public float HardStopHoldSeconds => hardStopHoldSeconds;
+    public float MissingSpeedRetentionPerSecond => missingSpeedRetentionPerSecond;
+    public float MotionSampleRateHertz => motionSampleRateHertz;
     public float MaximumGameSpeed => maximumGameSpeed;
     public float JumpVelocity => jumpVelocity;
+    public float SpeedCurveReferenceMetersPerSecond => speedCurveReferenceMetersPerSecond;
+    public float SpeedCurveLogFactor => speedCurveLogFactor;
+    public float SpeedCurveLinearWeight => speedCurveLinearWeight;
     public AnimationCurve PhysicalToGameSpeedCurve => physicalToGameSpeedCurve;
+
+    public MovementEstimatorSettings CreateMovementEstimatorSettings()
+    {
+        return CreateMovementEstimatorSettings(
+            MovementTuningValues.FromConfiguration(this));
+    }
+
+    public MovementEstimatorSettings CreateMovementEstimatorSettings(
+        MovementTuningValues tuning)
+    {
+        return new MovementEstimatorSettings(
+            tuning.GpsStaleSeconds,
+            tuning.GpsLossFallbackSeconds,
+            gpsReturnBlendSeconds,
+            tuning.HardBrakingThresholdMetersPerSecondSquared,
+            hardBrakingDurationSeconds,
+            tuning.AccelerationNoiseFilter,
+            tuning.GpsReliance,
+            maximumAccelerationMetersPerSecondSquared,
+            maximumAcceptedPhysicalSpeedMetersPerSecond,
+            hardStopHoldSeconds,
+            missingSpeedRetentionPerSecond,
+            maximumAcceptedHorizontalAccuracyMeters,
+            stopThresholdMetersPerSecond);
+    }
 
     private static AnimationCurve CreateDefaultCurve()
     {

@@ -55,6 +55,7 @@ public sealed class LevelDirector : MonoBehaviour
     bool seekPending;
     float seekIssuedAt;
     bool seekHooked;
+    float appliedPlaybackSpeed = -1f;
 
     const float SeekTimeout = 1.5f;
 
@@ -87,6 +88,11 @@ public sealed class LevelDirector : MonoBehaviour
         {
             background = FindFirstObjectByType<VideoBackground>();
         }
+
+        if (background != null)
+        {
+            background.Begin(level.PlaybackFileName);
+        }
     }
 
     void Update()
@@ -109,7 +115,7 @@ public sealed class LevelDirector : MonoBehaviour
             // multiplier, a frame hitch - shows up as drift, and drift used to
             // trigger a seek that never completed, freezing playback outright.
             // Reading its clock cannot drift by construction.
-            player.playbackSpeed = Mathf.Clamp(speedMultiplier, 0f, MaxPlaybackSpeed);
+            SetPlaybackSpeed(player, speedMultiplier);
             videoTime = (float)player.time;
             distance = level.DistanceAtTime(videoTime);
         }
@@ -161,7 +167,7 @@ public sealed class LevelDirector : MonoBehaviour
         // Always set the rate, even mid-seek. An earlier version returned early
         // while a seek was pending, so a seek that never completed left the rate
         // frozen and the video stuck for good.
-        player.playbackSpeed = Mathf.Clamp(desiredRate - drift * 0.5f, 0f, MaxPlaybackSpeed);
+        SetPlaybackSpeed(player, desiredRate - drift * 0.5f);
 
         bool seekInFlight = seekPending && Time.unscaledTime - seekIssuedAt < SeekTimeout;
         if (seekInFlight)
@@ -178,6 +184,25 @@ public sealed class LevelDirector : MonoBehaviour
         {
             IssueSeek(player, targetTime);
         }
+    }
+
+    /// <summary>
+    /// Assign playback speed only when it changes.
+    /// </summary>
+    /// <remarks>
+    /// Every assignment reaches into the native player, and writing the same
+    /// value 60 times a second is work for nothing.
+    /// </remarks>
+    void SetPlaybackSpeed(VideoPlayer player, float rate)
+    {
+        float clamped = Mathf.Clamp(rate, 0f, MaxPlaybackSpeed);
+        if (Mathf.Abs(clamped - appliedPlaybackSpeed) < 0.01f)
+        {
+            return;
+        }
+
+        appliedPlaybackSpeed = clamped;
+        player.playbackSpeed = clamped;
     }
 
     void IssueSeek(VideoPlayer player, float targetTime)

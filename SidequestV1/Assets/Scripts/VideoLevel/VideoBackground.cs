@@ -32,7 +32,6 @@ public sealed class VideoBackground : MonoBehaviour
     const string PreferredShader = "Sidequest/RearCameraBackground";
 
     [SerializeField] Camera targetCamera;
-    [SerializeField] string videoFileName = "IMG_3775.mov";
     [SerializeField] FitMode fitMode = FitMode.Letterbox;
 
     VideoPlayer player;
@@ -41,26 +40,62 @@ public sealed class VideoBackground : MonoBehaviour
     Material material;
     float halfWidth;
     float halfHeight;
+    int laidOutWidth;
+    int laidOutHeight;
+    float laidOutAspect;
 
     public VideoPlayer Player => player;
     public bool IsPrepared => player != null && player.isPrepared;
 
     void Awake()
     {
+        EnsureInitialized();
+    }
+
+    /// <summary>
+    /// Set up the player and quad, whoever asks first.
+    /// </summary>
+    /// <remarks>
+    /// Unity does not order Awake between objects, so LevelDirector.Awake can
+    /// call Begin before this component's own Awake has run. Initializing on
+    /// demand removes the ordering dependency rather than relying on luck.
+    /// </remarks>
+    void EnsureInitialized()
+    {
+        if (player != null)
+        {
+            return;
+        }
+
         if (targetCamera == null)
         {
             targetCamera = Camera.main;
         }
 
         player = GetComponent<VideoPlayer>();
-        ConfigurePlayer();
         BuildQuad();
     }
 
-    void ConfigurePlayer()
+    /// <summary>
+    /// Start preparing a clip from StreamingAssets.
+    /// </summary>
+    /// <remarks>
+    /// The file name comes from the level rather than a serialized field, so
+    /// changing clips does not need the scene rebuilt - a scene holding a stale
+    /// name silently played the wrong file, or nothing.
+    /// </remarks>
+    public void Begin(string fileName)
     {
+        EnsureInitialized();
+
+        if (string.IsNullOrEmpty(fileName))
+        {
+            Debug.LogError("VideoBackground: no clip name; the level file has no playbackFile.");
+            return;
+        }
+
         player.source = VideoSource.Url;
-        player.url = ResolveUrl(videoFileName);
+        player.url = ResolveUrl(fileName);
         player.renderMode = VideoRenderMode.RenderTexture;
         player.audioOutputMode = VideoAudioOutputMode.None;
         player.isLooping = false;
@@ -120,7 +155,19 @@ public sealed class VideoBackground : MonoBehaviour
             CreateTexture();
         }
 
-        RefreshLayout();
+        // The layout only depends on the screen and the clip, neither of which
+        // changes most frames. Recomputing it every frame wrote a new transform
+        // scale 60 times a second to arrive at the same number.
+        if (targetCamera != null
+            && (Screen.width != laidOutWidth
+                || Screen.height != laidOutHeight
+                || !Mathf.Approximately(targetCamera.aspect, laidOutAspect)))
+        {
+            laidOutWidth = Screen.width;
+            laidOutHeight = Screen.height;
+            laidOutAspect = targetCamera.aspect;
+            RefreshLayout();
+        }
     }
 
     void CreateTexture()
@@ -133,6 +180,7 @@ public sealed class VideoBackground : MonoBehaviour
             wrapMode = TextureWrapMode.Clamp
         };
         player.targetTexture = texture;
+        RefreshLayout();
 
         if (material != null)
         {

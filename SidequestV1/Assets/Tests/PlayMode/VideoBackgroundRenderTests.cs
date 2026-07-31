@@ -39,14 +39,19 @@ public class VideoBackgroundRenderTests
         Assert.That(background.IsPrepared, Is.True,
             "VideoPlayer never prepared - check the clip is in StreamingAssets and decodable");
 
-        // Let the director start playback and a few frames actually decode.
-        for (int i = 0; i < 60; i++)
+        // Wait in real time, not frames: a decoder needs wall clock, and under
+        // batchmode a frame count elapses in microseconds.
+        deadline = Time.realtimeSinceStartup + 10f;
+        while (background.Player.frame <= 0 && Time.realtimeSinceStartup < deadline)
         {
             yield return null;
         }
 
         Assert.That(background.Player.isPlaying, Is.True, "VideoPlayer is not playing");
         Assert.That(background.Player.frame, Is.GreaterThan(0L), "no frames decoded");
+
+        // A moment more so the first frame has certainly reached the texture.
+        yield return new WaitForSecondsRealtime(0.5f);
 
         Texture2D shot = CaptureMainCamera();
         try

@@ -20,6 +20,7 @@ from .obstacles import ObstacleConfig, extract_obstacles
 from .overlay import render as render_overlay
 from .segment import GroundSegmenter, SurfaceFrame, load_surfaces, save_surfaces
 from .speed import SpeedConfig, SpeedResult, estimate_speed
+from .transcode import TranscodeSettings, transcode
 
 
 def _resolve_video(raw: str) -> Path | None:
@@ -380,6 +381,7 @@ def _command_author(args: argparse.Namespace) -> int:
         travel_direction=result.travel_direction,
         speed_curve=(result.times, result.speeds),
         analysis_width=args.analysis_width,
+        playback_file=args.playback_file,
     )
 
     counts: dict[str, int] = {}
@@ -401,6 +403,25 @@ def _command_author(args: argparse.Namespace) -> int:
     output = Path(args.output).expanduser().resolve()
     write_authored(output, level)
     print(f"\nwrote {output} ({output.stat().st_size / 1e6:.2f} MB)")
+    return 0
+
+
+def _command_transcode(args: argparse.Namespace) -> int:
+    video = _resolve_video(args.video)
+    if video is None:
+        return 1
+
+    info = probe(video)
+    _describe(info, video)
+
+    output = Path(args.output).expanduser().resolve()
+    print(f"transcoding to {args.height}p H.264 (no audio)...")
+    transcode(video, output, TranscodeSettings(height=args.height, crf=args.crf))
+
+    before = video.stat().st_size / 1e6
+    after = output.stat().st_size / 1e6
+    print(f"\n{before:.0f} MB -> {after:.0f} MB  ({after / before:.0%})")
+    print(f"wrote {output}")
     return 0
 
 
@@ -478,7 +499,21 @@ def main(argv: list[str] | None = None) -> int:
     author.add_argument("--stride", type=int, default=1)
     author.add_argument("--min-stop-duration", type=float, default=0.5)
     author.add_argument("--character-column", type=float, default=0.35)
+    author.add_argument(
+        "--playback-file",
+        default="IMG_3775.play.mp4",
+        help="file name the game should play, as it appears in StreamingAssets",
+    )
     author.set_defaults(func=_command_author)
+
+    transcode_parser = subparsers.add_parser(
+        "transcode", help="make a playback-friendly copy (720p H.264, no audio)"
+    )
+    transcode_parser.add_argument("video", help="path to the source video")
+    transcode_parser.add_argument("-o", "--output", required=True, help="write the mp4 here")
+    transcode_parser.add_argument("--height", type=int, default=720)
+    transcode_parser.add_argument("--crf", type=int, default=23)
+    transcode_parser.set_defaults(func=_command_transcode)
 
     args = parser.parse_args(argv)
     return args.func(args)

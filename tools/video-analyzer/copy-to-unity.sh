@@ -10,13 +10,13 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 repo="$(cd "$here/../.." && pwd)"
 target="$repo/SidequestV1/Assets/StreamingAssets"
 
-video="${1:-$repo/IMG_3775.mov}"
+video="${1:-$here/out/IMG_3775.play.mp4}"
 level="${2:-$here/out/IMG_3775.authored.json}"
 
 for file in "$video" "$level"; do
   if [[ ! -f "$file" ]]; then
     echo "error: missing $file" >&2
-    echo "hint: run 'uv run analyze author ...' first" >&2
+    echo "hint: run 'uv run analyze transcode ...' and 'uv run analyze author ...' first" >&2
     exit 1
   fi
 done

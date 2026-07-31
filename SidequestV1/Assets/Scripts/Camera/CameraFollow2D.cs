@@ -12,13 +12,19 @@ public sealed class CameraFollow2D : MonoBehaviour
     private float fixedYPosition = 2f;
 
     [SerializeField, Min(0f)]
-    private float smoothTime = 0.15f;
+    private float smoothTime;
 
+    [SerializeField, Range(0f, 0.9f)]
+    private float maximumViewportOffset = 0.65f;
+
+    private Camera attachedCamera;
     private float zPosition;
     private float xVelocity;
+    private float previousTargetX;
 
     private void Awake()
     {
+        attachedCamera = GetComponent<Camera>();
         zPosition = transform.position.z;
 
         if (target == null)
@@ -28,15 +34,51 @@ public sealed class CameraFollow2D : MonoBehaviour
         }
     }
 
+    private void Start()
+    {
+        if (enabled)
+        {
+            SnapToTarget();
+        }
+    }
+
     private void LateUpdate()
     {
-        float targetX = target.position.x + horizontalOffset;
-        float nextX = Mathf.SmoothDamp(
-            transform.position.x,
-            targetX,
-            ref xVelocity,
-            smoothTime);
+        float targetDeltaX = target.position.x - previousTargetX;
+        previousTargetX = target.position.x;
+        transform.position += Vector3.right * targetDeltaX;
+
+        float targetX = CalculateTargetX();
+        float nextX = smoothTime <= Mathf.Epsilon
+            ? targetX
+            : Mathf.SmoothDamp(
+                transform.position.x,
+                targetX,
+                ref xVelocity,
+                smoothTime,
+                Mathf.Infinity,
+                Time.unscaledDeltaTime);
 
         transform.position = new Vector3(nextX, fixedYPosition, zPosition);
+    }
+
+    private void SnapToTarget()
+    {
+        xVelocity = 0f;
+        previousTargetX = target.position.x;
+        transform.position = new Vector3(CalculateTargetX(), fixedYPosition, zPosition);
+    }
+
+    private float CalculateTargetX()
+    {
+        float offset = horizontalOffset;
+        if (attachedCamera != null && attachedCamera.orthographic)
+        {
+            float halfViewWidth = attachedCamera.orthographicSize * attachedCamera.aspect;
+            float maximumOffset = halfViewWidth * maximumViewportOffset;
+            offset = Mathf.Clamp(offset, -maximumOffset, maximumOffset);
+        }
+
+        return target.position.x + offset;
     }
 }

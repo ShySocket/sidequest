@@ -49,7 +49,6 @@ public sealed class VideoLevel
         }
     }
 
-    public VideoLevelData Data => data;
     public IReadOnlyList<VideoLevelEvent> Events => data.events;
     public float TotalDistance => data.totalDistance;
     public float Duration => data.source != null ? data.source.duration : 0f;
@@ -57,7 +56,10 @@ public sealed class VideoLevel
 
     /// <summary>-1 travels right-to-left, +1 left-to-right. Never 0.</summary>
     public int TravelDirection => data.travelDirection >= 0 ? 1 : -1;
-    public string VideoFileName => data.source != null ? data.source.file : null;
+    /// <summary>The clip to play, which is a cheaper transcode of the one analysed.</summary>
+    public string PlaybackFileName => !string.IsNullOrEmpty(data.playbackFile)
+        ? data.playbackFile
+        : data.source?.file;
 
     public static VideoLevel LoadFromStreamingAssets(string fileName)
     {
@@ -151,12 +153,6 @@ public sealed class VideoLevel
     public float ScreenSpeedAtDistance(float distance)
     {
         return speedDistances.Length == 0 ? 0f : Interpolate(speedDistances, speedValues, distance);
-    }
-
-    public string SurfaceAtDistance(float distance)
-    {
-        int index = Mathf.Clamp(UpperBound(pathDistances, distance) - 1, 0, data.path.Count - 1);
-        return data.path[index].s;
     }
 
     public bool IsHiddenAtDistance(float distance)

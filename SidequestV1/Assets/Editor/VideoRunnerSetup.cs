@@ -21,7 +21,7 @@ public static class VideoRunnerSetup
     const string ScenePath = SceneFolder + "/VideoRunner.unity";
     const string StreamingAssets = "Assets/StreamingAssets";
     const string LevelFileName = "IMG_3775.authored.json";
-    const string VideoFileName = "IMG_3775.mov";
+    const string VideoFileName = "IMG_3775.play.mp4";
 
     [MenuItem("Tools/Sidequest/Build Video Runner")]
     public static void Build()
@@ -115,7 +115,6 @@ public static class VideoRunnerSetup
 
         VideoBackground background = holder.AddComponent<VideoBackground>();
         SetPrivateField(background, "targetCamera", camera);
-        SetPrivateField(background, "videoFileName", VideoFileName);
         return background;
     }
 

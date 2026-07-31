@@ -13,6 +13,10 @@ public sealed class VideoRunnerHud : MonoBehaviour
 {
     const float UpcomingSeconds = 1.2f;
 
+    const string Controls =
+        "SPACE / tap = jump    DOWN or S = dodge    R = restart    "
+        + "- / = speed    LEFT / RIGHT = scrub 5s    F1 = hide";
+
     [SerializeField] LevelDirector director;
     [SerializeField] VideoRunnerCharacter character;
     [SerializeField] bool showDebug = true;
@@ -22,6 +26,16 @@ public sealed class VideoRunnerHud : MonoBehaviour
     GUIStyle cue;
     float outcomeShownAt = -10f;
     string shownOutcome = string.Empty;
+
+    // OnGUI runs at least twice a frame (layout, then repaint), so anything
+    // built there is built twice. These are rebuilt on a timer in Update and
+    // only read during OnGUI.
+    const float TextRefreshInterval = 0.1f;
+    float textRefreshedAt = -1f;
+    string scoreText = string.Empty;
+    string statusText = string.Empty;
+    string cueText;
+    float cueAlpha;
 
     void Start()
     {
@@ -84,6 +98,53 @@ public sealed class VideoRunnerHud : MonoBehaviour
         {
             director.SeekToTime(director.VideoTime - 5f);
         }
+
+        RefreshText();
+    }
+
+    void RefreshText()
+    {
+        if (character == null || director.Level == null)
+        {
+            return;
+        }
+
+        // The upcoming-cue scan has to run every frame or the prompt lags, but
+        // it is a walk over a short list, not string work.
+        cueText = null;
+        VideoLevelEvent next = null;
+        float bestGap = float.MaxValue;
+        foreach (VideoLevelEvent entry in director.Level.Events)
+        {
+            float gap = entry.time - director.VideoTime;
+            if (gap >= 0f && gap < bestGap)
+            {
+                bestGap = gap;
+                next = entry;
+            }
+        }
+
+        if (next != null && bestGap <= UpcomingSeconds)
+        {
+            string action = VideoLevelEventTypes.Parse(next.type) == VideoLevelEventType.Dodge
+                ? "DODGE"
+                : "JUMP";
+            cueText = $"{action}  ({next.label})";
+            cueAlpha = Mathf.Clamp01(1f - bestGap / UpcomingSeconds);
+        }
+
+        if (Time.unscaledTime - textRefreshedAt < TextRefreshInterval)
+        {
+            return;
+        }
+
+        textRefreshedAt = Time.unscaledTime;
+        scoreText =
+            $"{character.Cleared} cleared   {character.Missed} missed   /  {character.TotalEvents}";
+        statusText =
+            $"t {director.VideoTime:0.00}s    d {director.Distance:0}    "
+            + $"{director.Progress * 100f:0}%    x{director.SpeedMultiplier:0.00}    "
+            + $"{character.CurrentStance}";
     }
 
     void EnsureStyles()
@@ -112,21 +173,12 @@ public sealed class VideoRunnerHud : MonoBehaviour
 
         EnsureStyles();
 
-        GUI.Label(new Rect(18, 12, 600, 36),
-            $"{character.Cleared} cleared   {character.Missed} missed   /  {character.TotalEvents}",
-            heading);
+        GUI.Label(new Rect(18, 12, 600, 36), scoreText, heading);
 
         if (showDebug)
         {
-            GUI.Label(new Rect(18, 50, 600, 24),
-                $"t {director.VideoTime:0.00}s    d {director.Distance:0}    "
-                + $"{director.Progress * 100f:0}%    x{director.SpeedMultiplier:0.00}    "
-                + $"{character.CurrentStance}",
-                body);
-            GUI.Label(new Rect(18, 72, 820, 24),
-                "SPACE / tap = jump    DOWN or S = dodge    R = restart    "
-                + "- / = speed    LEFT / RIGHT = scrub 5s    F1 = hide",
-                body);
+            GUI.Label(new Rect(18, 50, 600, 24), statusText, body);
+            GUI.Label(new Rect(18, 72, 820, 24), Controls, body);
         }
 
         DrawUpcomingCue();
@@ -140,34 +192,14 @@ public sealed class VideoRunnerHud : MonoBehaviour
 
     void DrawUpcomingCue()
     {
-        VideoLevelEvent next = null;
-        float bestGap = float.MaxValue;
-
-        foreach (VideoLevelEvent entry in director.Level.Events)
-        {
-            float gap = entry.time - director.VideoTime;
-            if (gap >= 0f && gap < bestGap)
-            {
-                bestGap = gap;
-                next = entry;
-            }
-        }
-
-        if (next == null || bestGap > UpcomingSeconds)
+        if (string.IsNullOrEmpty(cueText))
         {
             return;
         }
 
-        string action = VideoLevelEventTypes.Parse(next.type) == VideoLevelEventType.Dodge
-            ? "DODGE"
-            : "JUMP";
-
         // Fade in as the cue approaches, so the prompt reads as urgency.
-        cue.normal.textColor = new Color(1f, 1f, 1f, Mathf.Clamp01(1f - bestGap / UpcomingSeconds));
-        GUI.Label(
-            new Rect(0, Screen.height * 0.22f, Screen.width, 60),
-            $"{action}  ({next.label})",
-            cue);
+        cue.normal.textColor = new Color(1f, 1f, 1f, cueAlpha);
+        GUI.Label(new Rect(0, Screen.height * 0.22f, Screen.width, 60), cueText, cue);
     }
 
     void DrawOutcome()

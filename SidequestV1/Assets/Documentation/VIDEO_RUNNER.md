@@ -7,15 +7,22 @@ Separate from `RunnerPrototype`, which is untouched.
 
 ## Run it
 
-1. Generate the level and copy the assets (once, or after editing the timeline):
+1. Make a playback copy of the clip (once per clip):
 
    ```bash
    cd tools/video-analyzer
+   uv run analyze transcode ../../IMG_3775.mov -o out/IMG_3775.play.mp4
+   ```
+
+2. Generate the level and copy both into StreamingAssets (repeat after editing
+   the timeline):
+
+   ```bash
    uv run analyze author ../../IMG_3775.mov -o out/IMG_3775.authored.json --surfaces out/IMG_3775.surfaces.npz
    ./copy-to-unity.sh
    ```
 
-2. In Unity: **Tools > Sidequest > Build Video Runner**, then press Play.
+3. In Unity: **Tools > Sidequest > Build Video Runner**, then press Play.
 
 The menu item regenerates `Assets/Scenes/VideoRunner.unity` from scratch, so
 re-running it is always a safe way back to a working scene.
@@ -145,14 +152,33 @@ The video is driven by `playbackSpeed` rather than by seeking each frame:
 seeking 1080p HEVC every frame stutters, while a scaled rate is smooth. A
 corrective seek only happens when drift exceeds 0.3 s.
 
-## Assets
+## Assets and performance
 
-`Assets/StreamingAssets/` holds the clip and the level. StreamingAssets is
-copied into builds verbatim and never imported, which is what a `VideoPlayer`
-URL source needs. The `.mov` is gitignored at 91 MB; the level JSON is committed.
+`Assets/StreamingAssets/` holds the playback clip and the level. StreamingAssets
+is copied into builds verbatim and never imported, which is what a `VideoPlayer`
+URL source needs. The video is gitignored; the level JSON is committed.
 
-The clip is HEVC in a `.mov`, which plays natively on macOS and iOS. **For
-Android, transcode to H.264 MP4** — HEVC support there is inconsistent.
+**The game does not play the original clip.** Analysis and playback want
+different things from the same footage: analysis runs once, offline, and wants
+every pixel; playback has to decode a frame every 16 ms on a phone while the game
+also renders. `analyze transcode` produces a 720p H.264 copy with no audio track —
+**a quarter of the pixels, 96 MB down to 46 MB**, and H.264 is the codec Android
+decodes reliably where HEVC does not. Analysis still uses the original, so nothing
+measured is degraded by it.
+
+Which file to play is recorded in the level (`playbackFile`), not in the scene.
+A scene holding a stale name silently played the wrong file or nothing at all.
+
+Other things that were costing frames, all of them work repeated every frame to
+reach the same answer:
+
+| Was | Now |
+|---|---|
+| `new MaterialPropertyBlock()` per frame | Allocated once, reused |
+| Shadow opacity uploaded every frame | Only when the value moves |
+| Background layout recomputed every frame | Only on a resolution or aspect change |
+| `VideoPlayer.playbackSpeed` assigned every frame | Only when it changes — each assignment reaches into the native player |
+| HUD strings rebuilt twice a frame by IMGUI | Rebuilt 10x a second, read during OnGUI |
 
 ## Tests
 

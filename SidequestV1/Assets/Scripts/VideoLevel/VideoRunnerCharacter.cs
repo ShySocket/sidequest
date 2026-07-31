@@ -48,10 +48,6 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     [Tooltip("Sideways travel as a fraction of the video frame's width.")]
     [SerializeField] float dodgeDistance = 0.10f;
 
-    [Header("Heading")]
-    [Tooltip("Degrees the character leans into its direction of travel.")]
-    [SerializeField] float leanAngle = 10f;
-
     [Header("Size")]
     [Tooltip("Ball diameter as a fraction of the video frame's height.")]
     [SerializeField] float characterHeight = 0.11f;

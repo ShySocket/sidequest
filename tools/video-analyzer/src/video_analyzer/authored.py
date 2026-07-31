@@ -98,6 +98,7 @@ def build_authored_level(
     travel_direction: int = -1,
     speed_curve: tuple[np.ndarray, np.ndarray] | None = None,
     analysis_width: int = 960,
+    playback_file: str | None = None,
     path_samples: int = 1400,
     map_samples: int = 1200,
 ) -> dict:
@@ -184,6 +185,10 @@ def build_authored_level(
             "height": info.height,
             "duration": round(info.duration, 4),
         },
+        # The clip the game plays, which is not the clip that was analysed: the
+        # game uses a smaller, cheaper transcode. Recording it here rather than in
+        # the scene means swapping clips needs no scene rebuild.
+        "playbackFile": playback_file or video.name,
         "distanceUnits": "relative",
         "characterColumn": character_column,
         # -1 = the character travels right-to-left across the screen. Measured

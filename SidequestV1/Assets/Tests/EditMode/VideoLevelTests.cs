@@ -17,6 +17,7 @@ public class VideoLevelTests
         ""version"": 2,
         ""source"": { ""file"": ""clip.mov"", ""fps"": 30, ""width"": 1920,
                       ""height"": 1080, ""duration"": 10 },
+        ""playbackFile"": ""clip.play.mp4"",
         ""distanceUnits"": ""relative"",
         ""characterColumn"": 0.35,
         ""totalDistance"": 100,
@@ -40,7 +41,7 @@ public class VideoLevelTests
         Assert.That(level, Is.Not.Null);
         Assert.That(level.TotalDistance, Is.EqualTo(100f));
         Assert.That(level.CharacterColumn, Is.EqualTo(0.35f).Within(1e-4f));
-        Assert.That(level.VideoFileName, Is.EqualTo("clip.mov"));
+        Assert.That(level.PlaybackFileName, Is.EqualTo("clip.play.mp4"));
         Assert.That(level.Events.Count, Is.EqualTo(1));
     }
 
@@ -84,15 +85,6 @@ public class VideoLevelTests
     }
 
     [Test]
-    public void SurfaceNameFollowsThePath()
-    {
-        VideoLevel level = Sample();
-
-        Assert.That(level.SurfaceAtDistance(10f), Is.EqualTo("rail"));
-        Assert.That(level.SurfaceAtDistance(60f), Is.EqualTo("floor"));
-    }
-
-    [Test]
     public void HiddenSpansAreDetected()
     {
         VideoLevel level = Sample();
@@ -100,6 +92,16 @@ public class VideoLevelTests
         Assert.That(level.IsHiddenAtDistance(60f), Is.False);
         Assert.That(level.IsHiddenAtDistance(75f), Is.True);
         Assert.That(level.IsHiddenAtDistance(85f), Is.False);
+    }
+
+    [Test]
+    public void PlaybackFileFallsBackToTheAnalysedClip()
+    {
+        // Older levels predate the transcode step and name only one file.
+        VideoLevel level = VideoLevel.Parse(
+            SampleJson.Replace(@"""playbackFile"": ""clip.play.mp4"",", string.Empty));
+
+        Assert.That(level.PlaybackFileName, Is.EqualTo("clip.mov"));
     }
 
     [Test]

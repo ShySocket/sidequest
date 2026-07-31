@@ -19,6 +19,7 @@ public class VideoLevelData
 {
     public int version;
     public VideoLevelSource source;
+    public string playbackFile;
     public string distanceUnits;
     public float characterColumn;
 

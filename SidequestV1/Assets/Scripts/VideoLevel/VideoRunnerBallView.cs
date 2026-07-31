@@ -75,11 +75,12 @@ public sealed class VideoRunnerBallView : MonoBehaviour
     float rollAngle;
     float squash;
     bool wasAirborne;
+    float shadowOpacity = -1f;
 
-    void Reset()
-    {
-        ball = transform;
-    }
+    // Reused rather than allocated per frame: a new MaterialPropertyBlock every
+    // frame is pure garbage for the collector to chase.
+    MaterialPropertyBlock shadowProperties;
+    static readonly int OpacityId = Shader.PropertyToID("_Opacity");
 
     public void Apply(in Pose pose, float deltaTime)
     {
@@ -108,7 +109,7 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         squash = Mathf.MoveTowards(squash, 0f, landingRecovery * deltaTime * Mathf.Max(squash, 0.1f));
 
         UpdateBall(pose, radius, deltaTime);
-        UpdateShadow(pose, radius);
+        UpdateShadow(pose);
     }
 
     void UpdateBall(in Pose pose, float radius, float deltaTime)
@@ -137,7 +138,7 @@ public sealed class VideoRunnerBallView : MonoBehaviour
             pose.Diameter);
     }
 
-    void UpdateShadow(in Pose pose, float radius)
+    void UpdateShadow(in Pose pose)
     {
         if (blobShadow == null)
         {
@@ -164,12 +165,15 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         blobShadow.position = pose.GroundPosition + offset + Vector3.forward * 0.02f;
         blobShadow.localScale = new Vector3(scale, scale * shadowFlatten, 1f);
 
-        if (blobShadowRenderer != null)
+        // Only touch the renderer when the value actually moved; setting a
+        // property block re-uploads material data every time it is called.
+        if (blobShadowRenderer != null && !Mathf.Approximately(opacity, shadowOpacity))
         {
-            MaterialPropertyBlock block = new MaterialPropertyBlock();
-            blobShadowRenderer.GetPropertyBlock(block);
-            block.SetFloat("_Opacity", opacity);
-            blobShadowRenderer.SetPropertyBlock(block);
+            shadowOpacity = opacity;
+            shadowProperties ??= new MaterialPropertyBlock();
+            blobShadowRenderer.GetPropertyBlock(shadowProperties);
+            shadowProperties.SetFloat(OpacityId, opacity);
+            blobShadowRenderer.SetPropertyBlock(shadowProperties);
         }
     }
 

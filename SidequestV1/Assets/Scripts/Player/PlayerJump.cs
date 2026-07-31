@@ -15,6 +15,8 @@ public sealed class PlayerJump : MonoBehaviour
     private GroundCheck groundCheck;
     private InputAction activeJumpAction;
     private InputAction fallbackJumpAction;
+    private bool groundJumpConsumed;
+    private bool airborneJumpAvailable = true;
 
     private void Awake()
     {
@@ -64,9 +66,26 @@ public sealed class PlayerJump : MonoBehaviour
         TryJump();
     }
 
+    private void FixedUpdate()
+    {
+        if (groundCheck.IsGrounded && body.linearVelocity.y <= 0f)
+        {
+            groundJumpConsumed = false;
+            airborneJumpAvailable = true;
+        }
+    }
+
     public bool TryJump()
     {
-        if (!groundCheck.IsGrounded)
+        if (groundCheck.IsGrounded && !groundJumpConsumed)
+        {
+            groundJumpConsumed = true;
+        }
+        else if (airborneJumpAvailable)
+        {
+            airborneJumpAvailable = false;
+        }
+        else
         {
             return false;
         }
