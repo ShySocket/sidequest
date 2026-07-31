@@ -13,7 +13,9 @@ import cv2
 import numpy as np
 
 from .decode import VideoInfo, iter_frames
+from .detect import DetectionFrame
 from .distance import DistanceMap
+from .obstacles import ObstacleConfig, ObstacleEvent
 from .segment import NO_GROUND, SurfaceFrame
 from .speed import SpeedConfig, SpeedResult
 
@@ -109,6 +111,72 @@ def _draw_run_line(image: np.ndarray, surface: SurfaceFrame) -> None:
         cv2.polylines(image, [np.array(segment, np.int32)], False, (0, 0, 255), 2, cv2.LINE_AA)
 
 
+CLASS_COLOURS = {
+    "car": (255, 0, 255),
+    "traffic sign": (60, 60, 255),
+    "pole": (200, 200, 255),
+    "bush": (0, 200, 200),
+    "unknown": (255, 255, 255),
+}
+
+
+def _draw_character_column(image: np.ndarray, config: ObstacleConfig, blocked: bool) -> None:
+    """The column the character occupies: obstacles matter only here."""
+    height, width = image.shape[:2]
+    centre = int(width * config.character_column)
+    half = max(1, int(width * config.column_halfwidth))
+    colour = RED if blocked else (0, 255, 120)
+
+    band = image.copy()
+    cv2.rectangle(band, (centre - half, 0), (centre + half, height), colour, -1)
+    cv2.addWeighted(band, 0.18, image, 0.82, 0, image)
+    cv2.line(image, (centre, 0), (centre, height), colour, 1)
+
+
+def _draw_detections(image: np.ndarray, frame: DetectionFrame, scale: float) -> None:
+    for detection in frame.detections:
+        if detection.is_surface or detection.label == "tree":
+            continue
+        x1, y1, x2, y2 = (int(v * scale) for v in detection.box)
+        colour = CLASS_COLOURS.get(detection.label, (180, 180, 180))
+        cv2.rectangle(image, (x1, y1), (x2, y2), colour, 1)
+        cv2.putText(
+            image,
+            f"{detection.label} {detection.score:.2f}",
+            (x1 + 2, max(y1 - 4, 12)),
+            FONT,
+            0.4,
+            colour,
+            1,
+            cv2.LINE_AA,
+        )
+
+
+def _draw_obstacle_strip(
+    width: int,
+    obstacles: list[ObstacleEvent],
+    distance_map: DistanceMap,
+    current_distance: float,
+    total_distance: float,
+) -> np.ndarray:
+    """A distance ruler showing every obstacle in the level and where we are."""
+    height = 46
+    panel = np.full((height, width, 3), 18, dtype=np.uint8)
+    if total_distance <= 0:
+        return panel
+
+    cv2.line(panel, (0, height - 14), (width, height - 14), (70, 70, 70), 1)
+    for event in obstacles:
+        x = int(event.distance / total_distance * (width - 1))
+        colour = CLASS_COLOURS.get(event.label, (180, 180, 180))
+        cv2.line(panel, (x, height - 30), (x, height - 8), colour, 1)
+
+    head = int(current_distance / total_distance * (width - 1))
+    cv2.line(panel, (head, 0), (head, height), WHITE, 1)
+    cv2.putText(panel, "obstacles", (6, 14), FONT, 0.42, GREY, 1, cv2.LINE_AA)
+    return panel
+
+
 def render(
     info: VideoInfo,
     result: SpeedResult,
@@ -119,6 +187,9 @@ def render(
     width: int = 960,
     stride: int = 1,
     surfaces: list[SurfaceFrame] | None = None,
+    detections: list[DetectionFrame] | None = None,
+    obstacles: list[ObstacleEvent] | None = None,
+    obstacle_config: ObstacleConfig | None = None,
     progress: object = None,
 ) -> None:
     """Write a debug overlay video next to the analysis output."""
@@ -126,7 +197,8 @@ def render(
 
     scale = width / info.width
     frame_height = int(round(info.height * scale))
-    canvas_height = frame_height + PLOT_HEIGHT
+    strip_height = 46 if obstacles is not None else 0
+    canvas_height = frame_height + PLOT_HEIGHT + strip_height
 
     writer = cv2.VideoWriter(
         str(output),
@@ -138,9 +210,9 @@ def render(
         raise RuntimeError(f"could not open video writer for {output}")
 
     peak_speed = float(np.percentile(result.speeds, 99.5)) or 1.0
-    surface_times = (
-        np.array([s.time for s in surfaces]) if surfaces else None
-    )
+    surface_times = np.array([s.time for s in surfaces]) if surfaces else None
+    detection_times = np.array([d.time for d in detections]) if detections else None
+    total_distance = distance_map.total_distance
 
     try:
         for frame in iter_frames(info, analysis_width=width, stride=stride):
@@ -154,13 +226,29 @@ def render(
             if surfaces and surface_times is not None:
                 surface = surfaces[int(np.argmin(np.abs(surface_times - frame.time)))]
 
+            speed = float(np.interp(frame.time, result.times, result.speeds))
+            distance = distance_map.distance_at(frame.time)
+
+            active = None
+            if obstacles:
+                for event in obstacles:
+                    if event.start_distance <= distance <= event.end_distance:
+                        active = event
+                        break
+
+            if obstacle_config is not None:
+                _draw_character_column(image, obstacle_config, active is not None)
+
             if surface is None:
                 _draw_roi(image, config)
             else:
                 _draw_run_line(image, surface)
 
-            speed = float(np.interp(frame.time, result.times, result.speeds))
-            distance = distance_map.distance_at(frame.time)
+            if detections and detection_times is not None:
+                position = int(np.argmin(np.abs(detection_times - frame.time)))
+                if abs(detection_times[position] - frame.time) < 0.2:
+                    _draw_detections(image, detections[position], scale * info.width / 960)
+
             confidence = float(np.interp(frame.time, result.times, result.confidence))
 
             lines = [
@@ -183,8 +271,19 @@ def render(
                     image, "STOPPED", (width - 190, 40), FONT, 0.9, RED, 2, cv2.LINE_AA
                 )
 
-            canvas = np.vstack([image, _draw_plot(width, result, frame.time)])
-            writer.write(canvas)
+            if active is not None:
+                text = f"OBSTACLE #{active.id}  {active.label}"
+                cv2.putText(image, text, (width - 340, 78), FONT, 0.7, (0, 0, 0), 4, cv2.LINE_AA)
+                cv2.putText(image, text, (width - 340, 78), FONT, 0.7, RED, 2, cv2.LINE_AA)
+
+            layers = [image, _draw_plot(width, result, frame.time)]
+            if obstacles is not None:
+                layers.append(
+                    _draw_obstacle_strip(
+                        width, obstacles, distance_map, float(distance), total_distance
+                    )
+                )
+            writer.write(np.vstack(layers))
 
             if progress is not None:
                 progress.update(1)

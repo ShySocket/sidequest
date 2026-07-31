@@ -12,7 +12,10 @@ import numpy as np
 from tqdm import tqdm
 
 from .decode import VideoInfo, iter_frames, probe
+from .detect import ObstacleDetector, load_detections, save_detections
 from .distance import DistanceMap, build_distance_map, find_stopped_spans
+from .level import build_level, write_level
+from .obstacles import ObstacleConfig, extract_obstacles
 from .overlay import render as render_overlay
 from .segment import GroundSegmenter, SurfaceFrame, load_surfaces, save_surfaces
 from .speed import SpeedConfig, SpeedResult, estimate_speed
@@ -210,6 +213,138 @@ def _command_surface(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_detect(args: argparse.Namespace) -> int:
+    video = _resolve_video(args.video)
+    if video is None:
+        return 1
+
+    info = probe(video)
+    _describe(info, video)
+
+    detector = ObstacleDetector()
+    total = info.frame_count // args.stride if info.frame_count > 0 else None
+
+    frames = []
+    width = height = 0
+    with tqdm(total=total, unit="frame", desc="detecting") as progress:
+        for frame in iter_frames(
+            info, analysis_width=args.analysis_width, stride=args.stride
+        ):
+            height, width = frame.image.shape[:2]
+            frames.append(detector.analyze(frame))
+            progress.update(1)
+
+    if not frames:
+        print("error: no frames were processed", file=sys.stderr)
+        return 1
+
+    counts: dict[str, int] = {}
+    for entry in frames:
+        for detection in entry.detections:
+            counts[detection.label] = counts.get(detection.label, 0) + 1
+
+    print()
+    print(f"device               {detector.device}")
+    print(f"frames processed     {len(frames)}")
+    print(f"detections           {sum(counts.values())}")
+    for label, count in sorted(counts.items(), key=lambda kv: -kv[1]):
+        print(f"  {label:16s} {count}")
+
+    output = Path(args.output).expanduser().resolve()
+    save_detections(output, frames, width, height)
+    print(f"\nwrote {output} ({output.stat().st_size / 1e6:.2f} MB)")
+    return 0
+
+
+def _command_level(args: argparse.Namespace) -> int:
+    video = _resolve_video(args.video)
+    if video is None:
+        return 1
+
+    info = probe(video)
+    _describe(info, video)
+
+    surfaces_path = Path(args.surfaces).expanduser().resolve()
+    if not surfaces_path.exists():
+        print(f"error: no such surfaces file: {surfaces_path}", file=sys.stderr)
+        return 1
+    surfaces = load_surfaces(surfaces_path)
+    print(f"loaded {len(surfaces)} surfaces")
+
+    detection_frames = None
+    if args.detections:
+        detections_path = Path(args.detections).expanduser().resolve()
+        if not detections_path.exists():
+            print(f"error: no such detections file: {detections_path}", file=sys.stderr)
+            return 1
+        detection_frames, _, _ = load_detections(detections_path)
+        print(f"loaded {len(detection_frames)} detection frames")
+
+    result, distance_map, speed_config = _run_speed(info, args, surfaces)
+    stops = find_stopped_spans(
+        result.times,
+        result.speeds,
+        speed_threshold=result.stop_threshold,
+        min_duration=args.min_stop_duration,
+    )
+
+    obstacle_config = ObstacleConfig(character_column=args.character_column)
+    obstacles = extract_obstacles(surfaces, distance_map, detection_frames, obstacle_config)
+
+    level = build_level(
+        video,
+        info,
+        distance_map,
+        surfaces,
+        obstacles,
+        stops,
+        obstacle_config,
+        diagnostics=result.diagnostics,
+        map_samples=args.map_samples,
+    )
+
+    named = [o for o in obstacles if o.label != "unknown"]
+    label_counts: dict[str, int] = {}
+    for event in obstacles:
+        label_counts[event.label] = label_counts.get(event.label, 0) + 1
+
+    print()
+    print(f"total distance       {distance_map.total_distance:.1f} relative units")
+    print(f"surface segments     {len(level['surfaceSegments'])}")
+    print(f"surface gaps         {len(level['surfaceGaps'])}")
+    print(f"obstacles            {len(obstacles)}  ({len(named)} classified)")
+    for label, count in sorted(label_counts.items(), key=lambda kv: -kv[1]):
+        print(f"  {label:16s} {count}")
+    if obstacles:
+        spacing = distance_map.total_distance / len(obstacles)
+        print(f"mean spacing         {spacing:.1f} units")
+
+    output = Path(args.output).expanduser().resolve()
+    write_level(output, level)
+    print(f"\nwrote {output} ({output.stat().st_size / 1e6:.2f} MB)")
+
+    if args.overlay:
+        overlay_path = Path(args.overlay).expanduser().resolve()
+        total = info.frame_count // args.overlay_stride if info.frame_count > 0 else None
+        with tqdm(total=total, unit="frame", desc="overlay") as progress:
+            render_overlay(
+                info,
+                result,
+                distance_map,
+                overlay_path,
+                config=speed_config,
+                stride=args.overlay_stride,
+                surfaces=surfaces,
+                detections=detection_frames,
+                obstacles=obstacles,
+                obstacle_config=obstacle_config,
+                progress=progress,
+            )
+        print(f"wrote {overlay_path}")
+
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="analyze",
@@ -243,6 +378,35 @@ def main(argv: list[str] | None = None) -> int:
     surface.add_argument("--analysis-width", type=int, default=960)
     surface.add_argument("--stride", type=int, default=2)
     surface.set_defaults(func=_command_surface)
+
+    detect = subparsers.add_parser(
+        "detect", help="name obstacles with zero-shot Grounding DINO"
+    )
+    detect.add_argument("video", help="path to the source video")
+    detect.add_argument("-o", "--output", required=True, help="write detections JSON here")
+    detect.add_argument("--analysis-width", type=int, default=960)
+    detect.add_argument(
+        "--stride",
+        type=int,
+        default=5,
+        help="detection only supplies labels; the run line supplies timing, "
+        "so it can be sampled far more sparsely than the surface pass",
+    )
+    detect.set_defaults(func=_command_detect)
+
+    level = subparsers.add_parser("level", help="assemble the level file")
+    level.add_argument("video", help="path to the source video")
+    level.add_argument("-o", "--output", required=True, help="write level JSON here")
+    level.add_argument("--surfaces", required=True, help="cached surfaces .npz")
+    level.add_argument("--detections", help="cached detections .json, for obstacle names")
+    level.add_argument("--analysis-width", type=int, default=960)
+    level.add_argument("--stride", type=int, default=1)
+    level.add_argument("--map-samples", type=int, default=2000)
+    level.add_argument("--min-stop-duration", type=float, default=0.5)
+    level.add_argument("--character-column", type=float, default=0.35)
+    level.add_argument("--overlay", help="render a debug overlay video here")
+    level.add_argument("--overlay-stride", type=int, default=1)
+    level.set_defaults(func=_command_level)
 
     args = parser.parse_args(argv)
     return args.func(args)
