@@ -95,6 +95,7 @@ def build_authored_level(
     timeline: Timeline,
     *,
     character_column: float,
+    travel_direction: int = -1,
     path_samples: int = 1400,
     map_samples: int = 1200,
 ) -> dict:
@@ -171,6 +172,9 @@ def build_authored_level(
         },
         "distanceUnits": "relative",
         "characterColumn": character_column,
+        # -1 = the character travels right-to-left across the screen. Measured
+        # from optical flow, not assumed: filming out the other window flips it.
+        "travelDirection": travel_direction,
         "totalDistance": round(distance_map.total_distance, 3),
         "timeToDistance": time_to_distance,
         "path": path,

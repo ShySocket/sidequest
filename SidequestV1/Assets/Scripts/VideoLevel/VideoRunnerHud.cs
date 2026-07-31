@@ -72,6 +72,18 @@ public sealed class VideoRunnerHud : MonoBehaviour
         {
             showDebug = !showDebug;
         }
+
+        // Left/right scrub by 5s, so a cue that looks wrong can be replayed
+        // without sitting through the run again.
+        if (Keyboard.current.rightArrowKey.wasPressedThisFrame)
+        {
+            director.SeekToTime(director.VideoTime + 5f);
+        }
+
+        if (Keyboard.current.leftArrowKey.wasPressedThisFrame)
+        {
+            director.SeekToTime(director.VideoTime - 5f);
+        }
     }
 
     void EnsureStyles()
@@ -111,9 +123,9 @@ public sealed class VideoRunnerHud : MonoBehaviour
                 + $"{director.Progress * 100f:0}%    x{director.SpeedMultiplier:0.00}    "
                 + $"{character.CurrentStance}",
                 body);
-            GUI.Label(new Rect(18, 72, 700, 24),
+            GUI.Label(new Rect(18, 72, 820, 24),
                 "SPACE / tap = jump    DOWN or S = dodge    R = restart    "
-                + "- / = speed    F1 = hide",
+                + "- / = speed    LEFT / RIGHT = scrub 5s    F1 = hide",
                 body);
         }
 

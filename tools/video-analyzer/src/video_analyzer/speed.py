@@ -109,6 +109,16 @@ class SpeedResult:
     """Fraction of tracked features that agreed, per sample, in 0..1."""
 
     stop_threshold: float = 0.0
+
+    travel_direction: int = -1
+    """Which way the character travels on screen: -1 right-to-left, +1 left-to-right.
+
+    The world sweeping one way means the vehicle is going the other, so this is
+    the negated sign of the optical flow. It decides which way the character
+    faces and which edge obstacles approach from - measured rather than assumed,
+    since filming out the opposite window flips it.
+    """
+
     diagnostics: dict = field(default_factory=dict)
 
 
@@ -183,7 +193,8 @@ def _frame_displacement(
     agreeing = int((np.sign(moving_dx) == np.sign(median_dx)).sum())
     confidence = agreeing / moving_count
 
-    return abs(median_dx), confidence
+    # Signed: the caller takes the magnitude for speed and the sign for heading.
+    return median_dx, confidence
 
 
 def _median_filter(values: np.ndarray, window: int) -> np.ndarray:
@@ -261,6 +272,7 @@ def estimate_speed(
     times: list[float] = []
     raw: list[float] = []
     confidences: list[float] = []
+    flow_signs: list[int] = []
 
     previous_gray: np.ndarray | None = None
     previous_time = 0.0
@@ -288,8 +300,10 @@ def estimate_speed(
 
                 pixels, confidence = _frame_displacement(previous_gray, gray, config, mask)
                 times.append(frame.time)
-                raw.append(pixels / interval)
+                raw.append(abs(pixels) / interval)
                 confidences.append(confidence)
+                if pixels != 0.0:
+                    flow_signs.append(1 if pixels > 0 else -1)
 
         previous_gray = gray
         previous_time = frame.time
@@ -332,13 +346,23 @@ def estimate_speed(
 
     stop_threshold = median_speed * config.stop_threshold_fraction
 
+    # World sweeping right means the vehicle is heading left, hence the negation.
+    world_sign = 1 if sum(flow_signs) >= 0 else -1
+    travel_direction = -world_sign
+    direction_agreement = (
+        float(np.mean(np.asarray(flow_signs) == world_sign)) if flow_signs else 0.0
+    )
+
     return SpeedResult(
         times=times_array,
         speeds=limited,
         raw_speeds=raw_array,
         confidence=np.asarray(confidences, dtype=np.float64),
         stop_threshold=stop_threshold,
+        travel_direction=travel_direction,
         diagnostics={
+            "travel_direction": travel_direction,
+            "direction_agreement": direction_agreement,
             "median_speed_px_per_s": median_speed,
             "mean_confidence": float(np.mean(confidences)) if confidences else 0.0,
             "sample_count": int(times_array.size),

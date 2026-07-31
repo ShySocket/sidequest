@@ -28,6 +28,7 @@ re-running it is always a safe way back to a working scene.
 | Down arrow, S, or Left Shift | Dodge (step aside) |
 | R | Restart |
 | `-` / `=` | Playback speed |
+| Left / Right arrow | Scrub 5s |
 | F1 | Toggle the debug readout |
 
 The HUD shows the current **video time**, which is the unit `timeline.json` is
@@ -65,6 +66,23 @@ The level stores the ground as a normalized y *within the video frame*, so
 anything positioning the character has to know where that frame landed on
 screen; letterboxing changes it, and getting it wrong puts the feet off the
 ground everywhere.
+
+## Direction of travel
+
+Measured, not assumed. On `IMG_3775.mov` the world sweeps left-to-right at
++50 px/frame with 98% of frames agreeing, so the vehicle - and the character -
+travel **right-to-left**, and obstacles arrive from the **left** edge.
+
+The analyzer emits this as `travelDirection: -1`, and the character mirrors and
+leans into it. Filming out the opposite window flips the sign automatically, with
+no code change.
+
+One consequence worth knowing: with `characterColumn` at 0.35, an obstacle only
+crosses 35% of the screen before reaching the character. Mirroring the usual
+runner layout - character on the right, obstacles entering from the left - would
+mean a column nearer 0.65 and more warning. That is a one-flag change
+(`--character-column`), but it shifts where each cue lands relative to the
+character, so the authored times would want a pass afterwards.
 
 ## Design notes
 

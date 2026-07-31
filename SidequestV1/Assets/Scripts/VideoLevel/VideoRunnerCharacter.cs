@@ -48,6 +48,10 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     [Tooltip("Sideways travel as a fraction of the video frame's width.")]
     [SerializeField] float dodgeDistance = 0.10f;
 
+    [Header("Heading")]
+    [Tooltip("Degrees the character leans into its direction of travel.")]
+    [SerializeField] float leanAngle = 10f;
+
     [Header("Size")]
     [Tooltip("Character height as a fraction of the video frame's height.")]
     [SerializeField] float characterHeight = 0.13f;
@@ -301,11 +305,15 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         float column = director.Level.CharacterColumn;
         float groundY = director.Level.GroundAtDistance(distance);
 
+        int heading = director.Level.TravelDirection;
+
         if (stance == Stance.Dodging && dodgeElapsed >= 0f)
         {
             // Out and back, so the character returns to its lane on its own.
+            // Steps *away* from where obstacles come from: the world sweeps
+            // opposite to travel, so oncoming things arrive on the heading side.
             float phase = Mathf.Sin(Mathf.PI * Mathf.Clamp01(dodgeElapsed / dodgeDuration));
-            column += dodgeDistance * phase;
+            column += dodgeDistance * phase * -heading;
         }
 
         Vector3 position = background.FrameToWorld(column, groundY);
@@ -315,7 +323,14 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         // The sprite's pivot is its centre; the ground line is where the feet go.
         position.y += height * 0.5f + airHeight * frameHeight;
         transform.position = position;
-        transform.localScale = new Vector3(height * 0.45f, height, 1f);
+
+        // Mirror to face the way it is going, so directional art works unchanged.
+        transform.localScale = new Vector3(height * 0.45f * heading, height, 1f);
+
+        // A plain box cannot show facing, so lean into the heading as well; this
+        // reads correctly with or without art on top.
+        float lean = stance == Stance.Airborne ? leanAngle * 0.5f : leanAngle;
+        transform.localRotation = Quaternion.Euler(0f, 0f, lean * heading);
 
         if (body != null)
         {

@@ -21,6 +21,16 @@ public class VideoLevelData
     public VideoLevelSource source;
     public string distanceUnits;
     public float characterColumn;
+
+    /// <summary>-1 = the character travels right-to-left across the screen.</summary>
+    /// <remarks>
+    /// Measured from optical flow by the analyzer rather than assumed: the world
+    /// sweeping one way means the vehicle is going the other, and filming out the
+    /// opposite window flips it. Decides which way the character faces and which
+    /// screen edge obstacles arrive from.
+    /// </remarks>
+    public int travelDirection = -1;
+
     public float totalDistance;
     public List<VideoLevelTimePoint> timeToDistance = new List<VideoLevelTimePoint>();
     public List<VideoLevelPathPoint> path = new List<VideoLevelPathPoint>();

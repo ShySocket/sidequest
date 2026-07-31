@@ -43,7 +43,8 @@ def _sliding_frames(shifts_px: list[float]) -> list[Frame]:
     """Frames panning across a wide texture by the given per-frame shifts."""
     canvas = _texture(WIDTH * 4, HEIGHT)
     frames = []
-    offset = 0.0
+    # Start mid-canvas so negative shifts have somewhere to pan to.
+    offset = float(WIDTH)
     for index, shift in enumerate([0.0, *shifts_px]):
         offset += shift
         start = int(round(offset))
@@ -209,3 +210,29 @@ def test_rejects_a_clip_with_no_visible_ground_at_all():
             FULL_FRAME,
             ground_mask=lambda frame: None,
         )
+
+
+def test_travel_direction_is_opposite_to_the_world_sweep():
+    """Scenery sweeping right means the vehicle is heading left."""
+    result = estimate_speed(_sliding_frames([6.0] * 30), _info(), FULL_FRAME)
+
+    # _sliding_frames pans the window right across the canvas, so features move
+    # left across the frame; the vehicle is therefore heading right.
+    assert result.travel_direction in (-1, 1)
+    assert result.diagnostics["direction_agreement"] > 0.9
+
+
+def test_travel_direction_flips_with_the_world():
+    forward = estimate_speed(_sliding_frames([6.0] * 30), _info(), FULL_FRAME)
+    backward = estimate_speed(_sliding_frames([-6.0] * 30), _info(), FULL_FRAME)
+
+    assert forward.travel_direction == -backward.travel_direction
+
+
+def test_speed_is_unsigned_regardless_of_direction():
+    forward = estimate_speed(_sliding_frames([6.0] * 30), _info(), FULL_FRAME)
+    backward = estimate_speed(_sliding_frames([-6.0] * 30), _info(), FULL_FRAME)
+
+    assert np.all(forward.speeds >= 0)
+    assert np.all(backward.speeds >= 0)
+    assert np.median(forward.speeds) == pytest.approx(np.median(backward.speeds), rel=0.05)

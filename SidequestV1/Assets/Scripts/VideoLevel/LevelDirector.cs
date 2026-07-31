@@ -48,6 +48,16 @@ public sealed class LevelDirector : MonoBehaviour
     float videoTime;
     bool finished;
 
+    // Seeking is asynchronous. Without tracking it, a large drift makes every
+    // frame issue a fresh seek that cancels the one still in flight, so the
+    // decoder never delivers a frame and the picture freezes while time appears
+    // to advance. Measured: 10 seeks in a row left the video on frame 0.
+    bool seekPending;
+    float seekIssuedAt;
+    bool seekHooked;
+
+    const float SeekTimeout = 1.5f;
+
     public VideoLevel Level => level;
     public float Distance => distance;
     public float VideoTime => videoTime;
@@ -126,12 +136,29 @@ public sealed class LevelDirector : MonoBehaviour
 
     void SynchronizeVideo(VideoPlayer player, float targetTime)
     {
+        if (!seekHooked)
+        {
+            player.seekCompleted += OnSeekCompleted;
+            seekHooked = true;
+        }
+
+        if (seekPending)
+        {
+            // A seek is in flight. Issuing another now would cancel it, so wait -
+            // with a timeout, since seekCompleted does not always fire.
+            if (Time.unscaledTime - seekIssuedAt < SeekTimeout)
+            {
+                return;
+            }
+
+            seekPending = false;
+        }
+
         float drift = (float)player.time - targetTime;
 
         if (Mathf.Abs(drift) > ResyncThreshold)
         {
-            player.time = targetTime;
-            player.playbackSpeed = 1f;
+            IssueSeek(player, targetTime);
             return;
         }
 
@@ -143,10 +170,49 @@ public sealed class LevelDirector : MonoBehaviour
         player.playbackSpeed = Mathf.Clamp(desiredRate - drift * 0.5f, 0f, MaxPlaybackSpeed);
     }
 
+    void IssueSeek(VideoPlayer player, float targetTime)
+    {
+        seekPending = true;
+        seekIssuedAt = Time.unscaledTime;
+        player.playbackSpeed = 1f;
+        player.time = targetTime;
+    }
+
+    void OnSeekCompleted(VideoPlayer source)
+    {
+        seekPending = false;
+    }
+
     float CurrentNativeRate()
     {
         float gameSpeed = vehicleSpeedController != null ? vehicleSpeedController.GameSpeed : 0f;
         return referenceGameSpeed > 0f ? gameSpeed / referenceGameSpeed : 0f;
+    }
+
+    /// <summary>
+    /// Jump to a point in the clip, in video seconds.
+    /// </summary>
+    /// <remarks>
+    /// Takes seconds rather than distance because that is the unit timeline.json
+    /// is written in, so a cue can be checked by typing in the same number that
+    /// authored it instead of replaying from the start.
+    /// </remarks>
+    public void SeekToTime(float seconds)
+    {
+        if (level == null)
+        {
+            return;
+        }
+
+        float clamped = Mathf.Clamp(seconds, 0f, level.Duration);
+        distance = level.DistanceAtTime(clamped);
+        videoTime = clamped;
+        finished = false;
+
+        if (background != null && background.IsPrepared)
+        {
+            IssueSeek(background.Player, clamped);
+        }
     }
 
     public void Restart()
@@ -157,7 +223,7 @@ public sealed class LevelDirector : MonoBehaviour
 
         if (background != null && background.IsPrepared)
         {
-            background.Player.time = 0d;
+            IssueSeek(background.Player, 0f);
             background.Player.Play();
         }
     }

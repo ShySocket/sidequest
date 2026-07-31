@@ -43,6 +43,9 @@ public sealed class VideoLevel
     public float TotalDistance => data.totalDistance;
     public float Duration => data.source != null ? data.source.duration : 0f;
     public float CharacterColumn => data.characterColumn;
+
+    /// <summary>-1 travels right-to-left, +1 left-to-right. Never 0.</summary>
+    public int TravelDirection => data.travelDirection >= 0 ? 1 : -1;
     public string VideoFileName => data.source != null ? data.source.file : null;
 
     public static VideoLevel LoadFromStreamingAssets(string fileName)

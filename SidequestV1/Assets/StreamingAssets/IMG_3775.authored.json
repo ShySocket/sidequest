@@ -9,6 +9,7 @@
  },
  "distanceUnits": "relative",
  "characterColumn": 0.35,
+ "travelDirection": -1,
  "totalDistance": 41396.212,
  "timeToDistance": [
   {

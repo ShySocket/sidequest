@@ -377,13 +377,17 @@ def _command_author(args: argparse.Namespace) -> int:
         segments,
         timeline,
         character_column=args.character_column,
+        travel_direction=result.travel_direction,
     )
 
     counts: dict[str, int] = {}
     for event in level["events"]:
         counts[event["type"]] = counts.get(event["type"], 0) + 1
 
+    heading = "right-to-left" if level["travelDirection"] < 0 else "left-to-right"
     print()
+    print(f"travel direction     {heading} "
+          f"({result.diagnostics['direction_agreement']:.0%} of frames agree)")
     print(f"path samples         {len(level['path'])}")
     print(f"events               {len(level['events'])}")
     for kind, count in sorted(counts.items()):
