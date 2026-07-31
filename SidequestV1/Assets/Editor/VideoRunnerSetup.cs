@@ -39,6 +39,7 @@ public static class VideoRunnerSetup
         LevelDirector director = CreateDirector(background);
         VideoRunnerCharacter character = CreateCharacter(director, background);
         CreateHud(director, character);
+        CreateSunLight();
 
         if (!Directory.Exists(SceneFolder))
         {
@@ -131,16 +132,92 @@ public static class VideoRunnerSetup
         LevelDirector director, VideoBackground background)
     {
         var holder = new GameObject("Character");
-        var renderer = holder.AddComponent<SpriteRenderer>();
-        renderer.sprite = BuildSprite();
-        renderer.color = new Color(0.15f, 0.85f, 1f);
-        renderer.sortingOrder = 100;
+
+        // A real sphere mesh, so the lighting has genuine normals to work with -
+        // a flat disc with a painted highlight falls apart the moment it rolls.
+        GameObject ball = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        ball.name = "Ball";
+        Object.DestroyImmediate(ball.GetComponent<Collider>());
+        ball.transform.SetParent(holder.transform, false);
+
+        var ballRenderer = ball.GetComponent<MeshRenderer>();
+        ballRenderer.sharedMaterial = BuildMaterial(
+            "Assets/Settings/BallLit.mat", "Sidequest/BallLit");
+        ballRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        ballRenderer.receiveShadows = false;
+
+        GameObject shadow = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        shadow.name = "ContactShadow";
+        Object.DestroyImmediate(shadow.GetComponent<Collider>());
+        shadow.transform.SetParent(holder.transform, false);
+
+        var shadowRenderer = shadow.GetComponent<MeshRenderer>();
+        shadowRenderer.sharedMaterial = BuildMaterial(
+            "Assets/Settings/BlobShadow.mat", "Sidequest/BlobShadow");
+        shadowRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        shadowRenderer.receiveShadows = false;
+
+        VideoRunnerBallView view = holder.AddComponent<VideoRunnerBallView>();
+        SetPrivateField(view, "ball", ball.transform);
+        SetPrivateField(view, "ballRenderer", ballRenderer);
+        SetPrivateField(view, "blobShadow", shadow.transform);
+        SetPrivateField(view, "blobShadowRenderer", shadowRenderer);
 
         VideoRunnerCharacter character = holder.AddComponent<VideoRunnerCharacter>();
         SetPrivateField(character, "director", director);
         SetPrivateField(character, "background", background);
-        SetPrivateField(character, "body", renderer);
+        SetPrivateField(character, "view", view);
         return character;
+    }
+
+    /// <summary>
+    /// A material asset, so the shader ships with the build.
+    /// </summary>
+    /// <remarks>
+    /// Shader.Find only resolves shaders a build actually included, and a shader
+    /// referenced by nothing is stripped. Referencing it from a committed
+    /// material is what keeps it present.
+    /// </remarks>
+    static Material BuildMaterial(string path, string shaderName)
+    {
+        var existing = AssetDatabase.LoadAssetAtPath<Material>(path);
+        if (existing != null)
+        {
+            return existing;
+        }
+
+        Shader shader = Shader.Find(shaderName);
+        if (shader == null)
+        {
+            Debug.LogError($"VideoRunnerSetup: shader '{shaderName}' not found");
+            return null;
+        }
+
+        var material = new Material(shader) { name = Path.GetFileNameWithoutExtension(path) };
+        AssetDatabase.CreateAsset(material, path);
+        return material;
+    }
+
+    /// <summary>
+    /// A light matching the sun in the footage.
+    /// </summary>
+    /// <remarks>
+    /// Read off the clip rather than chosen: shadows in the parking-lot sections
+    /// fall to the right and toward the camera, and the light is low and warm
+    /// (late afternoon). The ball's shader takes direction and colour as material
+    /// properties, so this light object exists mainly to document the choice and
+    /// to light anything else added later.
+    /// </remarks>
+    static void CreateSunLight()
+    {
+        var holder = new GameObject("Sun");
+        Light light = holder.AddComponent<Light>();
+        light.type = LightType.Directional;
+        light.color = new Color(1f, 0.94f, 0.82f);
+        light.intensity = 1.25f;
+        light.shadows = LightShadows.None;
+        holder.transform.rotation = Quaternion.LookRotation(
+            new Vector3(0.55f, -0.75f, 0.35f).normalized);
     }
 
     static void CreateHud(LevelDirector director, VideoRunnerCharacter character)

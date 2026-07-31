@@ -187,6 +187,9 @@ public sealed class VideoBackground : MonoBehaviour
     /// <summary>World units per unit of normalized frame height. Used to size the character.</summary>
     public float FrameHeightInWorld => halfHeight * 2f;
 
+    /// <summary>World units per unit of normalized frame width.</summary>
+    public float FrameWidthInWorld => halfWidth * 2f;
+
     void OnDestroy()
     {
         if (texture != null)

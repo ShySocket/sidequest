@@ -18,6 +18,8 @@ public sealed class VideoLevel
     readonly float[] mapTimes;
     readonly float[] mapDistances;
     readonly float[] pathDistances;
+    readonly float[] speedDistances;
+    readonly float[] speedValues;
 
     VideoLevel(VideoLevelData data)
     {
@@ -35,6 +37,15 @@ public sealed class VideoLevel
         for (int i = 0; i < data.path.Count; i++)
         {
             pathDistances[i] = data.path[i].d;
+        }
+
+        int speedCount = data.screenSpeed != null ? data.screenSpeed.Count : 0;
+        speedDistances = new float[speedCount];
+        speedValues = new float[speedCount];
+        for (int i = 0; i < speedCount; i++)
+        {
+            speedDistances[i] = data.screenSpeed[i].d;
+            speedValues[i] = data.screenSpeed[i].v;
         }
     }
 
@@ -129,6 +140,17 @@ public sealed class VideoLevel
         float span = b.d - a.d;
         float alpha = span > 0f ? Mathf.Clamp01((distance - a.d) / span) : 0f;
         return Mathf.Lerp(a.y, b.y, alpha);
+    }
+
+    /// <summary>How fast the world slides past, in frame widths per second.</summary>
+    /// <remarks>
+    /// Zero when the level carries no speed track, which reads as a ball that
+    /// slides rather than rolls - visibly wrong, and so preferable to inventing
+    /// a rate that quietly disagrees with the footage.
+    /// </remarks>
+    public float ScreenSpeedAtDistance(float distance)
+    {
+        return speedDistances.Length == 0 ? 0f : Interpolate(speedDistances, speedValues, distance);
     }
 
     public string SurfaceAtDistance(float distance)

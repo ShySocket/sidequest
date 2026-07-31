@@ -27,7 +27,7 @@ public sealed class LevelDirector : MonoBehaviour
         VehicleSpeed
     }
 
-    const float ResyncThreshold = 0.30f;
+    const float ResyncThreshold = 1.5f;
     const float MaxPlaybackSpeed = 4f;
 
     [SerializeField] string levelFileName = "IMG_3775.authored.json";
@@ -102,13 +102,26 @@ public sealed class LevelDirector : MonoBehaviour
             player.Play();
         }
 
-        AdvanceDistance(Time.deltaTime);
+        if (playbackMode == PlaybackMode.NativeRate)
+        {
+            // The video leads and distance follows it. Forcing the decoder to a
+            // computed time instead means any moment it cannot keep up - a fast
+            // multiplier, a frame hitch - shows up as drift, and drift used to
+            // trigger a seek that never completed, freezing playback outright.
+            // Reading its clock cannot drift by construction.
+            player.playbackSpeed = Mathf.Clamp(speedMultiplier, 0f, MaxPlaybackSpeed);
+            videoTime = (float)player.time;
+            distance = level.DistanceAtTime(videoTime);
+        }
+        else
+        {
+            // Real motion decides progress here, so the video has to be driven.
+            AdvanceDistance(Time.deltaTime);
+            videoTime = level.TimeAtDistance(distance);
+            SynchronizeVideo(player, videoTime);
+        }
 
-        float targetTime = level.TimeAtDistance(distance);
-        videoTime = targetTime;
-        SynchronizeVideo(player, targetTime);
-
-        if (distance >= level.TotalDistance || targetTime >= level.Duration - 0.05f)
+        if (distance >= level.TotalDistance || videoTime >= level.Duration - 0.05f)
         {
             finished = true;
             player.Pause();
@@ -142,40 +155,46 @@ public sealed class LevelDirector : MonoBehaviour
             seekHooked = true;
         }
 
-        if (seekPending)
-        {
-            // A seek is in flight. Issuing another now would cancel it, so wait -
-            // with a timeout, since seekCompleted does not always fire.
-            if (Time.unscaledTime - seekIssuedAt < SeekTimeout)
-            {
-                return;
-            }
-
-            seekPending = false;
-        }
-
         float drift = (float)player.time - targetTime;
+        float desiredRate = Mathf.Max(0f, CurrentNativeRate());
 
-        if (Mathf.Abs(drift) > ResyncThreshold)
+        // Always set the rate, even mid-seek. An earlier version returned early
+        // while a seek was pending, so a seek that never completed left the rate
+        // frozen and the video stuck for good.
+        player.playbackSpeed = Mathf.Clamp(desiredRate - drift * 0.5f, 0f, MaxPlaybackSpeed);
+
+        bool seekInFlight = seekPending && Time.unscaledTime - seekIssuedAt < SeekTimeout;
+        if (seekInFlight)
         {
-            IssueSeek(player, targetTime);
             return;
         }
 
-        // Nudge the rate to close small drift rather than seeking, which would be
-        // visible as a hitch.
-        float desiredRate = playbackMode == PlaybackMode.NativeRate
-            ? speedMultiplier
-            : Mathf.Max(0f, CurrentNativeRate());
-        player.playbackSpeed = Mathf.Clamp(desiredRate - drift * 0.5f, 0f, MaxPlaybackSpeed);
+        seekPending = false;
+
+        // Rate correction handles ordinary drift. Seeking is reserved for gaps
+        // too large to close that way, which rate alone would take many seconds
+        // to absorb.
+        if (Mathf.Abs(drift) > ResyncThreshold)
+        {
+            IssueSeek(player, targetTime);
+        }
     }
 
     void IssueSeek(VideoPlayer player, float targetTime)
     {
         seekPending = true;
         seekIssuedAt = Time.unscaledTime;
-        player.playbackSpeed = 1f;
-        player.time = targetTime;
+
+        // By frame rather than by time: frame seeks land on an exact decodable
+        // frame, where a time seek can be rounded to somewhere nearby.
+        if (player.frameRate > 0f)
+        {
+            player.frame = (long)(targetTime * player.frameRate);
+        }
+        else
+        {
+            player.time = targetTime;
+        }
     }
 
     void OnSeekCompleted(VideoPlayer source)

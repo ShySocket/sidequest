@@ -378,6 +378,8 @@ def _command_author(args: argparse.Namespace) -> int:
         timeline,
         character_column=args.character_column,
         travel_direction=result.travel_direction,
+        speed_curve=(result.times, result.speeds),
+        analysis_width=args.analysis_width,
     )
 
     counts: dict[str, int] = {}

@@ -30,7 +30,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
     [SerializeField] LevelDirector director;
     [SerializeField] VideoBackground background;
-    [SerializeField] SpriteRenderer body;
+    [SerializeField] VideoRunnerBallView view;
 
     [Header("Jump")]
     [Tooltip("Peak height as a fraction of the video frame's height.")]
@@ -53,8 +53,17 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     [SerializeField] float leanAngle = 10f;
 
     [Header("Size")]
-    [Tooltip("Character height as a fraction of the video frame's height.")]
-    [SerializeField] float characterHeight = 0.13f;
+    [Tooltip("Ball diameter as a fraction of the video frame's height.")]
+    [SerializeField] float characterHeight = 0.11f;
+
+    [Tooltip("Diameter multiplier where the ground is highest in frame (furthest away).")]
+    [SerializeField] float farScale = 0.72f;
+
+    [Tooltip("Diameter multiplier where the ground is lowest in frame (nearest).")]
+    [SerializeField] float nearScale = 1.25f;
+
+    [Tooltip("Ground line heights, normalized, that map to far and near scale.")]
+    [SerializeField] Vector2 depthRange = new Vector2(0.45f, 0.95f);
 
     readonly List<EventState> states = new List<EventState>();
 
@@ -97,9 +106,9 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             background = FindFirstObjectByType<VideoBackground>();
         }
 
-        if (body == null)
+        if (view == null)
         {
-            body = GetComponentInChildren<SpriteRenderer>();
+            view = GetComponentInChildren<VideoRunnerBallView>();
         }
     }
 
@@ -316,25 +325,32 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             column += dodgeDistance * phase * -heading;
         }
 
-        Vector3 position = background.FrameToWorld(column, groundY);
+        Vector3 groundPosition = background.FrameToWorld(column, groundY);
         float frameHeight = background.FrameHeightInWorld;
-        float height = characterHeight * frameHeight;
 
-        // The sprite's pivot is its centre; the ground line is where the feet go.
-        position.y += height * 0.5f + airHeight * frameHeight;
-        transform.position = position;
+        // Nearer ground sits lower in frame, so the ball grows as the run line
+        // descends. Without this it appears to swim as the road nears and recedes.
+        float depth = Mathf.InverseLerp(depthRange.x, depthRange.y, groundY);
+        float diameter = characterHeight * frameHeight * Mathf.Lerp(farScale, nearScale, depth);
 
-        // Mirror to face the way it is going, so directional art works unchanged.
-        transform.localScale = new Vector3(height * 0.45f * heading, height, 1f);
+        transform.position = groundPosition;
 
-        // A plain box cannot show facing, so lean into the heading as well; this
-        // reads correctly with or without art on top.
-        float lean = stance == Stance.Airborne ? leanAngle * 0.5f : leanAngle;
-        transform.localRotation = Quaternion.Euler(0f, 0f, lean * heading);
-
-        if (body != null)
+        if (view != null)
         {
-            body.enabled = stance != Stance.Hidden;
+            view.Apply(
+                new VideoRunnerBallView.Pose
+                {
+                    GroundPosition = groundPosition,
+                    AirHeight = airHeight * frameHeight,
+                    Diameter = diameter,
+                    ScreenSpeed = director.Level.ScreenSpeedAtDistance(distance)
+                        * background.FrameWidthInWorld,
+                    VerticalVelocity = verticalVelocity * frameHeight,
+                    JumpHeight = jumpHeight * frameHeight,
+                    Heading = heading,
+                    Hidden = stance == Stance.Hidden
+                },
+                Time.deltaTime);
         }
     }
 

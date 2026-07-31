@@ -96,6 +96,8 @@ def build_authored_level(
     *,
     character_column: float,
     travel_direction: int = -1,
+    speed_curve: tuple[np.ndarray, np.ndarray] | None = None,
+    analysis_width: int = 960,
     path_samples: int = 1400,
     map_samples: int = 1200,
 ) -> dict:
@@ -120,6 +122,18 @@ def build_authored_level(
         }
         for t, y in zip(sample_times, blended)
     ]
+
+    # Screen speed, in frame widths per second. The ball needs this to roll
+    # without slipping: angular rate is speed / radius, and both have to be in
+    # the same units, which pixels at some arbitrary analysis width are not.
+    screen_speed = []
+    if speed_curve is not None:
+        speed_times, speed_values = speed_curve
+        sampled = np.interp(sample_times, speed_times, speed_values) / float(analysis_width)
+        screen_speed = [
+            {"d": round(float(distance_map.distance_at(t)), 3), "v": round(float(v), 5)}
+            for t, v in zip(sample_times, sampled)
+        ]
 
     map_times = np.linspace(float(distance_map.times[0]), duration, map_samples)
     time_to_distance = [
@@ -178,6 +192,7 @@ def build_authored_level(
         "totalDistance": round(distance_map.total_distance, 3),
         "timeToDistance": time_to_distance,
         "path": path,
+        "screenSpeed": screen_speed,
         "events": events,
         "hidden": hidden,
     }

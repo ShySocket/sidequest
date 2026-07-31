@@ -34,6 +34,7 @@ public class VideoLevelData
     public float totalDistance;
     public List<VideoLevelTimePoint> timeToDistance = new List<VideoLevelTimePoint>();
     public List<VideoLevelPathPoint> path = new List<VideoLevelPathPoint>();
+    public List<VideoLevelSpeedPoint> screenSpeed = new List<VideoLevelSpeedPoint>();
     public List<VideoLevelEvent> events = new List<VideoLevelEvent>();
     public List<VideoLevelHiddenSpan> hidden = new List<VideoLevelHiddenSpan>();
 }
@@ -62,6 +63,15 @@ public class VideoLevelPathPoint
     public float d;
     public float y;
     public string s;
+}
+
+/// <summary>How fast the world slides past, in frame widths per second.</summary>
+/// <remarks>Measured by the analyzer; the ball rolls at this rate.</remarks>
+[Serializable]
+public class VideoLevelSpeedPoint
+{
+    public float d;
+    public float v;
 }
 
 [Serializable]

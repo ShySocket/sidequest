@@ -25,6 +25,7 @@ public class VideoLevelTests
                     {""d"":100,""y"":0.7,""s"":""grass""} ],
         ""events"": [ {""id"":0,""type"":""jump"",""label"":""van"",""time"":5,
                        ""distance"":50,""window"":0.5,""windowDistance"":5} ],
+        ""screenSpeed"": [ {""d"":0,""v"":0.4}, {""d"":50,""v"":0.6}, {""d"":100,""v"":0.5} ],
         ""hidden"": [ {""startDistance"":70,""endDistance"":80,
                        ""startTime"":7,""endTime"":8} ]
     }";
@@ -102,6 +103,36 @@ public class VideoLevelTests
     }
 
     [Test]
+    public void ScreenSpeedIsInterpolatedAlongTheLevel()
+    {
+        VideoLevel level = Sample();
+
+        Assert.That(level.ScreenSpeedAtDistance(0f), Is.EqualTo(0.4f).Within(1e-4f));
+        Assert.That(level.ScreenSpeedAtDistance(25f), Is.EqualTo(0.5f).Within(1e-3f));
+        Assert.That(level.ScreenSpeedAtDistance(50f), Is.EqualTo(0.6f).Within(1e-4f));
+    }
+
+    [Test]
+    public void ScreenSpeedIsZeroWhenTheLevelHasNoSpeedTrack()
+    {
+        // A ball that slides rather than rolls is visibly wrong, which beats
+        // inventing a rate that quietly disagrees with the footage.
+        VideoLevel level = VideoLevel.Parse(SampleJson.Replace("screenSpeed", "unusedTrack"));
+
+        Assert.That(level.ScreenSpeedAtDistance(25f), Is.EqualTo(0f));
+    }
+
+    [Test]
+    public void TravelDirectionIsNormalizedToPlusOrMinusOne()
+    {
+        Assert.That(Sample().TravelDirection, Is.EqualTo(-1));
+        Assert.That(
+            VideoLevel.Parse(SampleJson.Replace("\"characterColumn\": 0.35",
+                "\"characterColumn\": 0.35, \"travelDirection\": 1")).TravelDirection,
+            Is.EqualTo(1));
+    }
+
+    [Test]
     public void MalformedJsonIsRejectedRatherThanCrashing()
     {
         LogAssert.ignoreFailingMessages = true;
@@ -129,6 +160,10 @@ public class VideoLevelTests
         Assert.That(level.TotalDistance, Is.GreaterThan(0f));
         Assert.That(level.Events.Count, Is.GreaterThan(0));
         Assert.That(level.Duration, Is.GreaterThan(0f));
+        Assert.That(level.TravelDirection, Is.EqualTo(-1),
+            "IMG_3775 was filmed with the world sweeping left to right");
+        Assert.That(level.ScreenSpeedAtDistance(level.TotalDistance * 0.5f),
+            Is.GreaterThan(0f), "level has no screen speed track; the ball would slide");
 
         // Every event must sit inside the level, or it can never be reached.
         foreach (VideoLevelEvent entry in level.Events)

@@ -84,6 +84,37 @@ mean a column nearer 0.65 and more warning. That is a one-flag change
 (`--character-column`), but it shifts where each cue lands relative to the
 character, so the authored times would want a pass afterwards.
 
+## The character
+
+A black 3D sphere, lit to sit in the filmed world rather than on top of it.
+
+**Lighting is a custom shader, not URP/Lit.** This project renders through URP's
+2D Renderer, which draws no `UniversalForward` pass, so URP/Lit is simply
+invisible here — and switching the project to a 3D renderer to fix that would put
+the existing 2D prototype at risk. `Sidequest/BallLit` ships both pass tags, so it
+works under either renderer.
+
+It also has to match a *specific video*, not a generic scene. Light direction and
+colour are material properties, set from the footage: shadows in the parking-lot
+sections fall to the right and toward the camera, and the light is low and warm.
+A black ball has almost no diffuse response, so what actually reads as
+three-dimensional is the specular highlight and the fresnel rim — the albedo is
+near zero by design.
+
+**The shadow is a blob, deliberately.** A cast shadow needs a surface to land on,
+and there is no geometry here: the ground is pixels on a perspective plane that no
+flat receiver in the scene matches, so a shadow map would land in the wrong place
+or on nothing. A blob can be placed exactly where the level says the ground is.
+
+Four cues do the work of making it look present, in rough order of importance:
+
+| Cue | Why |
+|---|---|
+| Contact shadow | Without it the ball reads as a sticker. Size and opacity track height — that is what says *airborne* rather than *bigger* |
+| Rolling | A ball that translates without rotating looks dragged. Rate comes from the level's measured screen speed, so it matches the world sliding past |
+| Perspective scale | The ground line rises and falls as the road nears and recedes; the ball scales with it or it appears to swim |
+| Squash and stretch | Stretch through the arc, squash on landing — makes a jump read as effort rather than a slide upward |
+
 ## Design notes
 
 **Motion is kinematic, not physics-driven.** The ground here is a line sampled
