@@ -1,0 +1,84 @@
+# ---------------------------------------------------------------
+# Unity generated / regenerable
+# ---------------------------------------------------------------
+SidequestV1/[Ll]ibrary/
+SidequestV1/[Tt]emp/
+SidequestV1/[Oo]bj/
+SidequestV1/[Bb]uild/
+SidequestV1/[Bb]uilds/
+SidequestV1/[Ll]ogs/
+SidequestV1/[Mm]emoryCaptures/
+SidequestV1/[Rr]ecordings/
+
+# Asset meta files for folders Unity no longer sees
+/[Aa]ssets/AssetStoreTools*
+
+# Visual Studio / Rider / VS Code generated
+SidequestV1/.idea/
+*.csproj
+*.unityproj
+*.sln
+*.slnx
+*.suo
+*.tmp
+*.user
+*.userprefs
+*.pidb
+*.booproj
+*.svd
+*.pdb
+*.mdb
+*.opendb
+*.VC.db
+
+# Unity crash reports
+sysinfo.txt
+crashlytics-build.properties
+
+# Built players
+*.apk
+*.aab
+*.unitypackage
+*.app
+
+# ---------------------------------------------------------------
+# Video analyzer (tools/video-analyzer)
+# ---------------------------------------------------------------
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Model weights — never commit, always regenerable or downloadable
+*.pt
+*.pth
+*.onnx
+*.mlpackage/
+*.mlmodel
+*.safetensors
+tools/video-analyzer/weights/
+tools/video-analyzer/runs/
+
+# Analyzer working output (frames, overlays, caches).
+# Level JSON is committed deliberately — see levels/ below.
+tools/video-analyzer/out/
+tools/video-analyzer/cache/
+
+# ---------------------------------------------------------------
+# Source video — large binaries stay out of git
+# ---------------------------------------------------------------
+*.mov
+*.mp4
+*.m4v
+*.avi
+*.mkv
+
+# ---------------------------------------------------------------
+# macOS
+# ---------------------------------------------------------------
+.DS_Store
+._*
+.Spotlight-V100
+.Trashes

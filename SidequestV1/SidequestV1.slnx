@@ -1,6 +1,0 @@
-﻿<Solution>
-  <Project Path="VehicleRunner.Runtime.csproj" />
-  <Project Path="VehicleRunner.EditModeTests.csproj" />
-  <Project Path="VehicleRunner.PlayModeTests.csproj" />
-  <Project Path="Assembly-CSharp-Editor.csproj" />
-</Solution>
