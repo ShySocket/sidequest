@@ -45,4 +45,17 @@ public sealed class VehicleSpeedMapperTests
         Assert.That(mapper.MapToGameSpeed(10f), Is.EqualTo(6f).Within(0.01f));
         Assert.That(mapper.MapToGameSpeed(30f), Is.EqualTo(10f).Within(0.01f));
     }
+
+    [Test]
+    public void SoftenedCurveUsesConfiguredLinearAndLogBlend()
+    {
+        VehicleSpeedMapper softened = new VehicleSpeedMapper(30f, 10f, 0.08f, 0.85f);
+        float linear = 10f / 30f;
+        float curved = Mathf.Log(1f + 0.08f * 10f)
+            / Mathf.Log(1f + 0.08f * 30f);
+        float expected = (0.85f * linear + 0.15f * curved) * 10f;
+
+        Assert.That(softened.MapToGameSpeed(10f), Is.EqualTo(expected).Within(0.001f));
+        Assert.That(softened.MapToGameSpeed(80f), Is.EqualTo(10f));
+    }
 }

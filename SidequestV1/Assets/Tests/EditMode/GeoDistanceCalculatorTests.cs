@@ -29,4 +29,12 @@ public sealed class GeoDistanceCalculatorTests
         double reverse = GeoDistanceCalculator.DistanceMeters(3d, 4d, 1d, 2d);
         Assert.That(forward, Is.EqualTo(reverse).Within(0.001d));
     }
+
+    [Test]
+    public void BearingDueEastIsNinetyDegrees()
+    {
+        Assert.That(
+            GeoDistanceCalculator.InitialBearingDegrees(0d, 0d, 0d, 1d),
+            Is.EqualTo(90f).Within(0.01f));
+    }
 }

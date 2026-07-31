@@ -36,7 +36,21 @@ public sealed class DebugSpeedPanel : MonoBehaviour
         textBuilder.Append("Valid: ").Append(vehicleSpeedController.HasReceivedValidSpeed).AppendLine();
         textBuilder.Append("Available: ").Append(vehicleSpeedController.IsTrackingAvailable).AppendLine();
         textBuilder.Append("Held: ").Append(vehicleSpeedController.IsUsingHeldSpeed).AppendLine();
-        textBuilder.Append("Last: ").Append(vehicleSpeedController.LastKnownPhysicalSpeed.ToString("F2")).AppendLine();
+        textBuilder.Append("GPS health: ").Append(vehicleSpeedController.GpsHealth).AppendLine();
+        textBuilder.Append("Dead reckoning: ").Append(vehicleSpeedController.IsDeadReckoning).AppendLine();
+        textBuilder.Append("Braking: ").Append(vehicleSpeedController.IsBraking).AppendLine();
+        textBuilder.Append("Hard braking: ").Append(vehicleSpeedController.IsHardBraking).AppendLine();
+        textBuilder.Append("Stop confirmed: ").Append(vehicleSpeedController.SuddenStopDetected).AppendLine();
+        textBuilder.Append("Confidence: ").Append(vehicleSpeedController.EstimatorConfidence.ToString("F2")).AppendLine();
+        textBuilder.Append("Forward accel: ")
+            .Append(vehicleSpeedController.ForwardAccelerationMetersPerSecondSquared.ToString("F2"))
+            .AppendLine();
+        textBuilder.Append("GPS raw: ")
+            .Append(gpsSpeedProvider.LastKnownSpeedMetersPerSecond.ToString("F2"))
+            .AppendLine();
+        textBuilder.Append("Estimated: ")
+            .Append(vehicleSpeedController.LastKnownPhysicalSpeed.ToString("F2"))
+            .AppendLine();
         textBuilder.Append("Delayed: ").Append(vehicleSpeedController.DelayedPhysicalSpeed.ToString("F2")).AppendLine();
         textBuilder.Append("Filtered: ").Append(vehicleSpeedController.FilteredPhysicalSpeed.ToString("F2")).AppendLine();
         textBuilder.Append("Game: ").Append(vehicleSpeedController.GameSpeed.ToString("F2")).AppendLine();

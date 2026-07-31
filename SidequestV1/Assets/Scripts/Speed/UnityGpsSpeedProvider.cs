@@ -9,10 +9,8 @@ public sealed class UnityGpsSpeedProvider : MonoBehaviour, IVehicleSpeedProvider
 
     private Coroutine trackingCoroutine;
     private bool stopRequested;
-    private bool hasPreviousCoordinate;
-    private double previousLatitude;
-    private double previousLongitude;
-    private double previousGpsTimestamp;
+    private readonly GpsSpeedWindow speedWindow = new GpsSpeedWindow();
+    private bool hasInitialCoordinate;
     private double lastProcessedGpsTimestamp = double.MinValue;
     private double lastFreshLocalTime = -1d;
     private int consecutiveLowSpeedReadings;
@@ -24,6 +22,7 @@ public sealed class UnityGpsSpeedProvider : MonoBehaviour, IVehicleSpeedProvider
     public double LastLatitude { get; private set; }
     public double LastLongitude { get; private set; }
     public float LastHorizontalAccuracy { get; private set; }
+    public float LastCourseDegrees { get; private set; } = float.NaN;
     public double LastValidLocalSampleTime { get; private set; } = -1d;
     public event Action<VehicleSpeedReading> ValidSpeedReceived;
 
@@ -46,6 +45,7 @@ public sealed class UnityGpsSpeedProvider : MonoBehaviour, IVehicleSpeedProvider
         }
 
         stopRequested = false;
+        ResetTrackingState();
         trackingCoroutine = StartCoroutine(TrackLocation());
     }
 
@@ -167,36 +167,48 @@ public sealed class UnityGpsSpeedProvider : MonoBehaviour, IVehicleSpeedProvider
         LastHorizontalAccuracy = accuracy;
         lastFreshLocalTime = localTime;
 
-        if (!hasPreviousCoordinate)
+        if (!hasInitialCoordinate)
         {
-            StorePreviousCoordinate(latitude, longitude, gpsTimestamp);
-            TrackingState = GpsTrackingState.WaitingForFirstFix;
+            hasInitialCoordinate = true;
+            speedWindow.AddPosition(
+                latitude,
+                longitude,
+                gpsTimestamp,
+                out _,
+                out _);
+            AcceptSpeed(0f, accuracy, localTime);
             return;
         }
 
-        double elapsedGpsSeconds = gpsTimestamp - previousGpsTimestamp;
-        if (elapsedGpsSeconds <= 0d)
-        {
-            return;
-        }
-
-        double distanceMeters = GeoDistanceCalculator.DistanceMeters(
-            previousLatitude,
-            previousLongitude,
+        if (!speedWindow.AddPosition(
             latitude,
-            longitude);
-        double calculatedSpeed = distanceMeters / elapsedGpsSeconds;
-        StorePreviousCoordinate(latitude, longitude, gpsTimestamp);
-
-        if (double.IsNaN(calculatedSpeed)
-            || double.IsInfinity(calculatedSpeed)
-            || calculatedSpeed < 0d
-            || calculatedSpeed > configuration.MaximumAcceptedPhysicalSpeedMetersPerSecond)
+            longitude,
+            gpsTimestamp,
+            out float calculatedSpeed,
+            out float courseDegrees))
         {
             return;
         }
 
-        float acceptedSpeed = (float)calculatedSpeed;
+        if (float.IsNaN(calculatedSpeed)
+            || float.IsInfinity(calculatedSpeed)
+            || calculatedSpeed < 0f
+            || calculatedSpeed
+                > configuration.MaximumAcceptedPhysicalSpeedMetersPerSecond)
+        {
+            // Do not let a large multipath jump poison the next several
+            // windowed estimates. Restart from the current coordinate.
+            speedWindow.Reset();
+            speedWindow.AddPosition(
+                latitude,
+                longitude,
+                gpsTimestamp,
+                out _,
+                out _);
+            return;
+        }
+
+        float acceptedSpeed = calculatedSpeed;
         if (acceptedSpeed < configuration.StopThresholdMetersPerSecond)
         {
             consecutiveLowSpeedReadings++;
@@ -212,26 +224,41 @@ public sealed class UnityGpsSpeedProvider : MonoBehaviour, IVehicleSpeedProvider
             consecutiveLowSpeedReadings = 0;
         }
 
-        AcceptSpeed(acceptedSpeed, accuracy, localTime);
+        AcceptSpeed(acceptedSpeed, accuracy, localTime, courseDegrees);
     }
 
-    private void StorePreviousCoordinate(double latitude, double longitude, double gpsTimestamp)
+    private void ResetTrackingState()
     {
-        previousLatitude = latitude;
-        previousLongitude = longitude;
-        previousGpsTimestamp = gpsTimestamp;
-        hasPreviousCoordinate = true;
+        speedWindow.Reset();
+        hasInitialCoordinate = false;
+        lastProcessedGpsTimestamp = double.MinValue;
+        lastFreshLocalTime = -1d;
+        consecutiveLowSpeedReadings = 0;
+        HasReceivedValidSpeed = false;
+        IsTrackingAvailable = false;
+        LastKnownSpeedMetersPerSecond = 0f;
+        LastCourseDegrees = float.NaN;
+        LastValidLocalSampleTime = -1d;
     }
 
-    private void AcceptSpeed(float speed, float accuracy, double localTime)
+    private void AcceptSpeed(
+        float speed,
+        float accuracy,
+        double localTime,
+        float courseDegrees = float.NaN)
     {
         HasReceivedValidSpeed = true;
         IsTrackingAvailable = true;
         TrackingState = GpsTrackingState.Tracking;
         LastKnownSpeedMetersPerSecond = speed;
         LastValidLocalSampleTime = localTime;
+        LastCourseDegrees = courseDegrees;
         lastFreshLocalTime = localTime;
-        ValidSpeedReceived?.Invoke(new VehicleSpeedReading(speed, accuracy, localTime));
+        ValidSpeedReceived?.Invoke(new VehicleSpeedReading(
+            speed,
+            accuracy,
+            localTime,
+            courseDegrees));
     }
 
     private void DetectSignalLoss()

@@ -27,4 +27,21 @@ public static class GeoDistanceCalculator
 
         return EarthRadiusMeters * centralAngle;
     }
+
+    public static float InitialBearingDegrees(
+        double latitude1,
+        double longitude1,
+        double latitude2,
+        double longitude2)
+    {
+        double latitude1Radians = latitude1 * DegreesToRadians;
+        double latitude2Radians = latitude2 * DegreesToRadians;
+        double longitudeDelta = (longitude2 - longitude1) * DegreesToRadians;
+        double y = Math.Sin(longitudeDelta) * Math.Cos(latitude2Radians);
+        double x = Math.Cos(latitude1Radians) * Math.Sin(latitude2Radians)
+            - Math.Sin(latitude1Radians) * Math.Cos(latitude2Radians)
+            * Math.Cos(longitudeDelta);
+        double bearing = Math.Atan2(y, x) / DegreesToRadians;
+        return (float)((bearing + 360d) % 360d);
+    }
 }
