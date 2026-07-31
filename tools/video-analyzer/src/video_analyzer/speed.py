@@ -80,6 +80,20 @@ class SpeedConfig:
     smoothing_window: int = 9
     """Median-filter width, in samples, applied to the raw curve."""
 
+    max_acceleration_fraction: float = 0.5
+    """Largest believable speed change per second, as a fraction of median speed.
+
+    Depth is fundamentally unrecoverable from monocular flow, so a scene that
+    suddenly gets closer reads as a scene that suddenly got faster. Physics
+    disambiguates: a car cannot change speed several-fold in a fraction of a
+    second, so an excursion that steep is depth, not motion.
+
+    0.5 is roughly twice hard acceleration for a car at this median speed, which
+    leaves genuine dynamics untouched while clipping the artefacts. The Unity
+    side already takes the same position via
+    RunnerConfiguration.maximumAcceleration.
+    """
+
     stop_threshold_fraction: float = 0.06
     """Fraction of median speed below which the vehicle counts as stopped."""
 
@@ -183,6 +197,40 @@ def _median_filter(values: np.ndarray, window: int) -> np.ndarray:
     return np.median(strided, axis=1)
 
 
+def _limit_acceleration(
+    times: np.ndarray,
+    speeds: np.ndarray,
+    max_change_per_second: float,
+) -> np.ndarray:
+    """Clip physically impossible upward excursions in the speed curve.
+
+    Two passes, forward and backward, each capping how fast the curve may rise;
+    the result is their elementwise minimum. Running it in both directions
+    matters: a single forward pass would clip a spike's leading edge but leave
+    its trailing edge, and would lag the whole curve. Taking the min of both
+    envelopes brackets a spike from either side without shifting it in time.
+
+    Only *rises* are limited. Real braking is a genuine sharp fall and the
+    stop detector depends on it, so downward moves pass through untouched.
+    """
+    if max_change_per_second <= 0 or speeds.size < 2:
+        return speeds.copy()
+
+    intervals = np.diff(times)
+
+    forward = speeds.copy()
+    for index in range(1, speeds.size):
+        ceiling = forward[index - 1] + max_change_per_second * intervals[index - 1]
+        forward[index] = min(forward[index], ceiling)
+
+    backward = speeds.copy()
+    for index in range(speeds.size - 2, -1, -1):
+        ceiling = backward[index + 1] + max_change_per_second * intervals[index]
+        backward[index] = min(backward[index], ceiling)
+
+    return np.minimum(forward, backward)
+
+
 def estimate_speed(
     frames: list[Frame] | object,
     info: VideoInfo,
@@ -194,9 +242,19 @@ def estimate_speed(
     """Estimate a per-frame speed curve from an iterable of frames.
 
     ``ground_mask`` optionally returns a uint8 mask of ground-plane pixels for a
-    frame, replacing the fixed ROI band. Supplying segmentation masks here is
-    the principled fix for the depth confound described in the module docstring;
-    returning ``None`` for a frame falls back to the band.
+    frame, replacing the fixed ROI band. Supplying segmentation masks here
+    addresses the depth confound described in the module docstring.
+
+    Returning ``None`` from that callable means *no ground was visible*, and the
+    sample is treated as unmeasurable and interpolated over rather than guessed
+    at. Falling back to the fixed band would be worse than useless: where the
+    ground is hidden it is usually hidden by a wall filling the frame, which is
+    exactly what the band would then measure. Measured on IMG_3775.mov, falling
+    back made the t~61s artefact worse (2.18x -> 2.37x), while interpolating
+    removes it.
+
+    Passing no callable at all is different from a callable returning ``None``:
+    it means no segmentation is available, and the fixed band is all there is.
     """
     config = config or SpeedConfig()
 
@@ -213,7 +271,21 @@ def estimate_speed(
         if previous_gray is not None:
             interval = frame.time - previous_time
             if interval > 0:
-                mask = ground_mask(frame) if ground_mask is not None else None
+                if ground_mask is not None:
+                    mask = ground_mask(frame)
+                    if mask is None:
+                        # No ground visible: unmeasurable, not slow or fast.
+                        times.append(frame.time)
+                        raw.append(np.nan)
+                        confidences.append(0.0)
+                        previous_gray = gray
+                        previous_time = frame.time
+                        if progress is not None:
+                            progress.update(1)
+                        continue
+                else:
+                    mask = None
+
                 pixels, confidence = _frame_displacement(previous_gray, gray, config, mask)
                 times.append(frame.time)
                 raw.append(pixels / interval)
@@ -232,15 +304,37 @@ def estimate_speed(
 
     times_array = np.asarray(times, dtype=np.float64)
     raw_array = np.asarray(raw, dtype=np.float64)
-    smoothed = _median_filter(raw_array, config.smoothing_window)
+
+    # Bridge unmeasurable samples before filtering. Speed is continuous, so
+    # linear interpolation across a short gap beats any measurement taken of the
+    # wrong surface.
+    unmeasurable = np.isnan(raw_array)
+    measurable = ~unmeasurable
+    if not measurable.any():
+        raise RuntimeError("no frame had a visible ground surface to measure")
+    filled = raw_array.copy()
+    if unmeasurable.any():
+        filled[unmeasurable] = np.interp(
+            times_array[unmeasurable], times_array[measurable], raw_array[measurable]
+        )
+
+    smoothed = _median_filter(filled, config.smoothing_window)
 
     positive = smoothed[smoothed > 0]
     median_speed = float(np.median(positive)) if positive.size else 0.0
+
+    # The acceleration cap is expressed relative to the clip's own median, since
+    # distances here are in pixels and carry no absolute scale.
+    limited = _limit_acceleration(
+        times_array, smoothed, median_speed * config.max_acceleration_fraction
+    )
+    clipped_fraction = float(np.mean(limited < smoothed - 1e-9))
+
     stop_threshold = median_speed * config.stop_threshold_fraction
 
     return SpeedResult(
         times=times_array,
-        speeds=smoothed,
+        speeds=limited,
         raw_speeds=raw_array,
         confidence=np.asarray(confidences, dtype=np.float64),
         stop_threshold=stop_threshold,
@@ -248,5 +342,7 @@ def estimate_speed(
             "median_speed_px_per_s": median_speed,
             "mean_confidence": float(np.mean(confidences)) if confidences else 0.0,
             "sample_count": int(times_array.size),
+            "acceleration_clipped_fraction": clipped_fraction,
+            "unmeasurable_fraction": float(np.mean(unmeasurable)),
         },
     )

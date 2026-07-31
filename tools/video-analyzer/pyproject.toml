@@ -8,6 +8,9 @@ dependencies = [
     "opencv-python>=4.10",
     "imageio-ffmpeg>=0.5",
     "tqdm>=4.66",
+    "torch>=2.13.0",
+    "torchvision>=0.28.0",
+    "transformers>=5.14.1",
 ]
 
 [project.scripts]

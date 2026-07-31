@@ -9,7 +9,12 @@ import numpy as np
 import pytest
 
 from video_analyzer.decode import Frame, VideoInfo
-from video_analyzer.speed import SpeedConfig, _median_filter, estimate_speed
+from video_analyzer.speed import (
+    SpeedConfig,
+    _limit_acceleration,
+    _median_filter,
+    estimate_speed,
+)
 
 FPS = 30.0
 WIDTH = 640
@@ -135,3 +140,72 @@ def test_median_filter_removes_spikes_without_shifting_the_level():
 def test_median_filter_is_a_no_op_for_unit_window():
     values = np.array([3.0, 1.0, 4.0, 1.0, 5.0])
     assert np.array_equal(_median_filter(values, 1), values)
+
+
+def test_acceleration_limiter_clips_an_impossible_spike():
+    times = np.linspace(0.0, 10.0, 301)
+    speeds = np.full_like(times, 100.0)
+    speeds[150:154] = 500.0  # a 5x jump inside ~0.1s
+
+    limited = _limit_acceleration(times, speeds, max_change_per_second=50.0)
+
+    assert limited.max() < 120.0
+    assert limited[0] == pytest.approx(100.0)
+
+
+def test_acceleration_limiter_preserves_real_braking():
+    """A sharp fall is genuine deceleration; only rises are capped."""
+    times = np.linspace(0.0, 10.0, 301)
+    speeds = np.where(times < 5.0, 100.0, 0.0)
+
+    limited = _limit_acceleration(times, speeds, max_change_per_second=50.0)
+
+    assert limited[-1] == pytest.approx(0.0)
+    assert np.all(limited <= speeds + 1e-9)
+
+
+def test_acceleration_limiter_does_not_shift_the_curve_in_time():
+    """Two-sided clipping must not lag a legitimate ramp the way one pass would."""
+    times = np.linspace(0.0, 10.0, 301)
+    speeds = 10.0 + 4.0 * times  # 4 units/s, well under the cap
+
+    limited = _limit_acceleration(times, speeds, max_change_per_second=50.0)
+
+    assert np.allclose(limited, speeds)
+
+
+def test_acceleration_limiter_is_a_no_op_when_disabled():
+    times = np.linspace(0.0, 5.0, 51)
+    speeds = np.random.default_rng(0).uniform(1.0, 900.0, size=times.size)
+
+    assert np.array_equal(_limit_acceleration(times, speeds, 0.0), speeds)
+
+
+def test_unmeasurable_frames_are_interpolated_not_guessed():
+    """Where no ground is visible, bridge the gap instead of measuring a wall."""
+    frames = _sliding_frames([6.0] * 40)
+    blind = {15, 16, 17, 18}
+
+    result = estimate_speed(
+        frames,
+        _info(),
+        FULL_FRAME,
+        ground_mask=lambda frame: None if frame.index in blind else np.full(
+            frame.image.shape[:2], 255, dtype=np.uint8
+        ),
+    )
+
+    assert result.diagnostics["unmeasurable_fraction"] > 0
+    # The bridged samples sit at the same level as the rest, not at zero.
+    assert np.median(result.speeds) == pytest.approx(6.0 * FPS, rel=0.05)
+    assert result.speeds.min() > 0.5 * 6.0 * FPS
+
+
+def test_rejects_a_clip_with_no_visible_ground_at_all():
+    with pytest.raises(RuntimeError, match="no frame had a visible ground"):
+        estimate_speed(
+            _sliding_frames([6.0] * 10),
+            _info(),
+            FULL_FRAME,
+            ground_mask=lambda frame: None,
+        )

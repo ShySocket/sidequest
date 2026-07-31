@@ -29,12 +29,18 @@ uv sync
 
 ## Usage
 
+Segment the ground surface first — it is cached, and the speed pass consumes it:
+
 ```bash
-uv run analyze speed ../../IMG_3775.mov -o out/level.json --overlay out/overlay.mp4
+uv run analyze surface ../../IMG_3775.mov -o out/surfaces.npz --stride 2
+```
+
+```bash
+uv run analyze speed ../../IMG_3775.mov -o out/level.json --surfaces out/surfaces.npz --overlay out/overlay.mp4
 ```
 
 `--overlay` renders the debug video, which is the real acceptance test: a wrong
-speed curve is obvious on screen and invisible in JSON.
+speed curve or a drifting run line is obvious on screen and invisible in JSON.
 
 Useful flags: `--stride N` (analyse every Nth frame), `--analysis-width`
 (default 960), `--overlay-stride`.
@@ -43,34 +49,65 @@ Useful flags: `--stride N` (analyse every Nth frame), `--analysis-width`
 uv run pytest
 ```
 
+Runtimes on an M5 (24 GB), for the 88 s / 2627-frame clip:
+
+| Pass | Rate | Wall clock |
+|---|---|---|
+| Optical flow | 165 fps | 16 s |
+| SAM 2 surface (stride 2) | 3.9 fps | 5 min 38 s |
+| Grounding DINO detection | 1.0 fps | ~46 min |
+
+Everything runs locally on MPS. No API keys, no accounts, no cloud.
+
 ## Status
 
 | Stage | State |
 |---|---|
 | Decode, time↔distance map | done, unit tested |
-| Ego-motion speed curve | done — **provisional**, see below |
-| Surface segmentation (sidewalk / railing) | not started |
-| Obstacle detection + tracking | not started |
-| Level file emit | speed and distance only |
+| Ego-motion speed curve | done |
+| Ground surface + run line (SAM 2) | done |
+| Obstacle detection + tracking | detection validated, not yet integrated |
+| Level file emit | speed, distance and surfaces |
 
-## Known limitation: depth confounds speed
+## Depth, and why speed is relative
 
-Optical flow scales as `speed / depth`, so scene depth leaks into the speed
-estimate.
+Optical flow scales as `speed / depth`, and monocular video gives no depth, so
+a scene that suddenly gets closer reads as one that suddenly got faster. This
+clip carries no GPS track either, so there is no ground truth to calibrate
+against. **Speed is therefore relative, not metric** — which is all the game
+needs, since playback is driven by ratios.
 
-Measuring five horizontal bands of the frame on `IMG_3775.mov` showed the near
-ground beside the car is decisively the most stable proxy — IQR/median **0.62**,
-against 1.29–1.70 for bands looking at the mid-field or horizon — because the
-ground sits at a roughly fixed distance while scenery does not. That is why
-`SpeedConfig.roi_top/roi_bottom` default to the bottom of the frame.
+Three things reduce the artefact, and it is worth being precise about which one
+actually mattered:
 
-It is a reduction, not a cure. Where the car passes close to a building the wall
-fills the band: this clip spikes **4.5×** at t≈61 s, which is depth, not
-acceleration. Narrowing the band only reaches 3.3×, so geometry alone cannot fix
-it — visible directly in the overlay, where the ROI at t≈60.7 s contains nothing
-but brick.
+1. **ROI choice.** Measuring five horizontal bands showed the near ground is by
+   far the most stable proxy (IQR/median **0.62** against 1.29–1.70 for bands
+   looking at the mid-field or horizon), because it holds a roughly fixed depth.
+   Hence the defaults in `SpeedConfig`.
+2. **Ground masking** (`--surfaces`). Restricts flow to SAM 2's ground mask.
+   Helps the peak modestly; barely moves the underlying roughness.
+3. **Acceleration limiting.** This is the fix. Peak speed change went from
+   **32× median per second** — physically impossible for a car — to **0.51×**,
+   the configured cap. A 63× reduction.
 
-The real fix is to restrict flow to pixels genuinely on the ground plane, using
-the road/sidewalk masks from the segmentation stage. `estimate_speed()` already
-takes a `ground_mask` callable for this. **Treat the current speed curve as
-provisional until those masks exist.**
+Measured on `IMG_3775.mov`, where the car passes within a metre of a brick wall
+at t≈61 s and the flow field briefly triples:
+
+| Configuration | max jerk (×median/s) |
+|---|---|
+| Fixed ROI band | 31.98 |
+| + ground mask | 32.72 |
+| + acceleration limit | **0.51** |
+
+A caution on reading the curve: the broad hump remaining around t≈60–64 s is
+probably *real*. Comparable humps appear at t≈33 s and t≈70 s where nothing
+unusual is in frame. Only the narrow needle was an artefact, and it is gone.
+
+Where SAM 2 finds no plausible ground — coverage of 94.5% at t≈61 s, against a
+median of 19.5%, means it segmented the wall — the sample is marked unmeasurable
+and interpolated rather than guessed. Falling back to the fixed band there
+measured *worse* (2.18× → 2.37× peak), because the band is looking at the same
+wall.
+
+To get metric speed, film with Location Services on: the clip then carries a GPS
+track and the constant can be fitted properly.

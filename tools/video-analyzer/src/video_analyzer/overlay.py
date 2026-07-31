@@ -14,6 +14,7 @@ import numpy as np
 
 from .decode import VideoInfo, iter_frames
 from .distance import DistanceMap
+from .segment import NO_GROUND, SurfaceFrame
 from .speed import SpeedConfig, SpeedResult
 
 WHITE = (255, 255, 255)
@@ -83,6 +84,31 @@ def _draw_roi(image: np.ndarray, config: SpeedConfig) -> None:
     )
 
 
+def _draw_run_line(image: np.ndarray, surface: SurfaceFrame) -> None:
+    """Draw the run line, breaking it wherever the ground is interrupted.
+
+    The breaks matter: a gap means an object is standing on the surface, so
+    drawing through it would hide exactly the obstacles we care about.
+    """
+    height, width = image.shape[:2]
+    scale_x = width / surface.width
+    scale_y = height / surface.height
+
+    segment: list[tuple[int, int]] = []
+    for column, value in enumerate(surface.run_line):
+        if value == NO_GROUND:
+            if len(segment) > 1:
+                cv2.polylines(
+                    image, [np.array(segment, np.int32)], False, (0, 0, 255), 2, cv2.LINE_AA
+                )
+            segment = []
+            continue
+        segment.append((int(column * scale_x), int(value * scale_y)))
+
+    if len(segment) > 1:
+        cv2.polylines(image, [np.array(segment, np.int32)], False, (0, 0, 255), 2, cv2.LINE_AA)
+
+
 def render(
     info: VideoInfo,
     result: SpeedResult,
@@ -92,6 +118,7 @@ def render(
     config: SpeedConfig,
     width: int = 960,
     stride: int = 1,
+    surfaces: list[SurfaceFrame] | None = None,
     progress: object = None,
 ) -> None:
     """Write a debug overlay video next to the analysis output."""
@@ -111,6 +138,9 @@ def render(
         raise RuntimeError(f"could not open video writer for {output}")
 
     peak_speed = float(np.percentile(result.speeds, 99.5)) or 1.0
+    surface_times = (
+        np.array([s.time for s in surfaces]) if surfaces else None
+    )
 
     try:
         for frame in iter_frames(info, analysis_width=width, stride=stride):
@@ -120,7 +150,14 @@ def render(
             else:
                 image = image.copy()
 
-            _draw_roi(image, config)
+            surface = None
+            if surfaces and surface_times is not None:
+                surface = surfaces[int(np.argmin(np.abs(surface_times - frame.time)))]
+
+            if surface is None:
+                _draw_roi(image, config)
+            else:
+                _draw_run_line(image, surface)
 
             speed = float(np.interp(frame.time, result.times, result.speeds))
             distance = distance_map.distance_at(frame.time)
@@ -132,6 +169,10 @@ def render(
                 f"distance {distance:9.1f}",
                 f"confidence {confidence:.2f}",
             ]
+            if surface is not None:
+                lines.append(
+                    f"ground {surface.coverage:5.1%}  runline {surface.valid_fraction:5.1%}"
+                )
             for row, text in enumerate(lines):
                 origin = (12, 28 + row * 24)
                 cv2.putText(image, text, origin, FONT, 0.6, (0, 0, 0), 3, cv2.LINE_AA)
