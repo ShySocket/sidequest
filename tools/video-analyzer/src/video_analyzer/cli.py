@@ -15,6 +15,7 @@ from .authored import MarkerTrack, Timeline, build_authored_level, write_authore
 from .decode import VideoInfo, iter_frames, probe
 from .detect import ObstacleDetector, load_detections, save_detections
 from .distance import DistanceMap, build_distance_map, find_stopped_spans
+from .ledges import LedgeExtractor, save_ledges
 from .level import build_level, build_surface_segments, write_level
 from .obstacles import ObstacleConfig, extract_obstacles
 from .overlay import render as render_overlay
@@ -391,6 +392,7 @@ def _command_author(args: argparse.Namespace) -> int:
         character_column=args.character_column,
         travel_direction=result.travel_direction,
         marker=marker,
+        ledges=Path(args.ledges).expanduser().resolve() if args.ledges else None,
         speed_curve=(result.times, result.speeds),
         analysis_width=args.analysis_width,
         playback_file=args.playback_file,
@@ -501,6 +503,49 @@ def _command_track(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_ledges(args: argparse.Namespace) -> int:
+    video = _resolve_video(args.video)
+    if video is None:
+        return 1
+
+    info = probe(video)
+    _describe(info, video)
+
+    detections_path = Path(args.detections).expanduser().resolve()
+    if not detections_path.exists():
+        print(f"error: no such detections file: {detections_path}", file=sys.stderr)
+        return 1
+    detection_frames, _, _ = load_detections(detections_path)
+    by_time = {round(f.time, 3): f for f in detection_frames}
+    print(f"loaded {len(detection_frames)} detection frames")
+
+    extractor = LedgeExtractor()
+    frames = []
+    with tqdm(total=len(detection_frames), unit="frame", desc="ledges") as progress:
+        for frame in iter_frames(info, analysis_width=args.analysis_width, stride=args.stride):
+            match = by_time.get(round(frame.time, 3))
+            if match is None:
+                continue
+            frames.append(extractor.analyze(frame, match.detections))
+            progress.update(1)
+
+    if not frames:
+        print("error: no frames processed", file=sys.stderr)
+        return 1
+
+    print()
+    print(f"device               {extractor.device}")
+    print(f"frames               {len(frames)}")
+    for surface in sorted({n for f in frames for n in f.lines}):
+        present = sum(1 for f in frames if surface in f.lines)
+        print(f"  {surface:8s} present in {present} frames ({present / len(frames):.0%})")
+
+    output = Path(args.output).expanduser().resolve()
+    save_ledges(output, frames)
+    print(f"\nwrote {output} ({output.stat().st_size / 1e6:.2f} MB)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="analyze",
@@ -576,6 +621,9 @@ def main(argv: list[str] | None = None) -> int:
     author.add_argument("--min-stop-duration", type=float, default=0.5)
     author.add_argument("--character-column", type=float, default=0.35)
     author.add_argument(
+        "--ledges", help="ledges .npz from 'analyze ledges'; snaps the path to real surfaces"
+    )
+    author.add_argument(
         "--marker", help="tracked marker JSON from 'analyze track'; overrides the timeline"
     )
     author.add_argument(
@@ -602,6 +650,16 @@ def main(argv: list[str] | None = None) -> int:
     track_parser.add_argument("--analysis-width", type=int, default=640)
     track_parser.add_argument("--stride", type=int, default=1)
     track_parser.set_defaults(func=_command_track)
+
+    ledges_parser = subparsers.add_parser(
+        "ledges", help="extract top edges of runnable things (railings, hedges)"
+    )
+    ledges_parser.add_argument("video", help="path to the source video")
+    ledges_parser.add_argument("-o", "--output", required=True, help="write ledges .npz here")
+    ledges_parser.add_argument("--detections", required=True, help="cached detections .json")
+    ledges_parser.add_argument("--analysis-width", type=int, default=960)
+    ledges_parser.add_argument("--stride", type=int, default=5)
+    ledges_parser.set_defaults(func=_command_ledges)
 
     args = parser.parse_args(argv)
     return args.func(args)

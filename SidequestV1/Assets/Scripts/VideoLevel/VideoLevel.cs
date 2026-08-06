@@ -178,6 +178,19 @@ public sealed class VideoLevel
         return point.x > 0f ? point.x : data.characterColumn;
     }
 
+    /// <summary>Which surface the character is on: rail, hedge, sidewalk, grass, floor.</summary>
+    /// <remarks>
+    /// Named by the authored timeline and given an exact height by the extracted
+    /// ledges, so it is what the character is genuinely standing on rather than
+    /// whatever happened to be nearest.
+    /// </remarks>
+    public string SurfaceAtDistance(float distance)
+    {
+        int index = Mathf.Clamp(UpperBound(pathDistances, distance) - 1, 0, data.path.Count - 1);
+        string surface = data.path[index].s;
+        return string.IsNullOrEmpty(surface) ? "floor" : surface;
+    }
+
     /// <summary>How fast the world slides past, in frame widths per second.</summary>
     /// <remarks>
     /// Zero when the level carries no speed track, which reads as a ball that

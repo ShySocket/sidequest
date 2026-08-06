@@ -44,6 +44,9 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         public float JumpHeight;
         public int Heading;
         public bool Hidden;
+
+        /// <summary>Surface being run on, which changes how the ball reads.</summary>
+        public string Surface;
     }
 
     [SerializeField] Transform ball;
@@ -77,6 +80,13 @@ public sealed class VideoRunnerBallView : MonoBehaviour
     [Header("Roll")]
     [Tooltip("Extra roll beyond rolling without slipping. 1 = physically exact.")]
     [SerializeField] float rollScale = 1f;
+
+    [Header("Surface feel")]
+    [Tooltip("Roll rate multiplier on a rail, which should read as fast and precise.")]
+    [SerializeField] float railRollBoost = 1.35f;
+
+    [Tooltip("Shadow width multiplier on a rail: a narrow surface, so a tight contact.")]
+    [SerializeField] float railShadowNarrowing = 0.45f;
 
     float rollAngle;
     float squash;
@@ -183,7 +193,9 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         // is in frame widths per second and the radius in world units, so it is
         // converted through the ball's own diameter rather than a magic constant.
         float circumference = Mathf.Max(pose.Diameter * Mathf.PI, 0.0001f);
-        float degreesPerSecond = pose.ScreenSpeed / circumference * 360f * rollScale;
+        float surfaceRoll = pose.Surface == "rail" ? railRollBoost : 1f;
+        float degreesPerSecond =
+            pose.ScreenSpeed / circumference * 360f * rollScale * surfaceRoll;
         // Heading is negated because rolling leftward is a positive rotation
         // about the axis pointing out of the screen.
         rollAngle += degreesPerSecond * deltaTime * -pose.Heading;
@@ -214,7 +226,11 @@ public sealed class VideoRunnerBallView : MonoBehaviour
             ? Mathf.Clamp01(pose.AirHeight / pose.JumpHeight)
             : 0f;
 
-        float scale = Mathf.Lerp(shadowContactScale, shadowApexScale, altitude) * pose.Diameter;
+        // A rail is narrow, so the contact patch is too - which is most of what
+        // makes running a rail read differently from running open ground.
+        float narrowing = pose.Surface == "rail" ? railShadowNarrowing : 1f;
+        float scale =
+            Mathf.Lerp(shadowContactScale, shadowApexScale, altitude) * pose.Diameter * narrowing;
         float opacity = Mathf.Lerp(shadowContactOpacity, shadowApexOpacity, altitude);
 
         // The shadow slides away from the ball as it rises, along the light.

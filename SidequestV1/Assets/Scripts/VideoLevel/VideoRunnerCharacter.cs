@@ -459,7 +459,8 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                         : 0f,
                     JumpHeight = Mathf.Max(activeJumpHeight, jumpHeight) * frameHeight,
                     Heading = heading,
-                    Hidden = stance == Stance.Hidden
+                    Hidden = stance == Stance.Hidden,
+                    Surface = director.Level.SurfaceAtDistance(distance)
                 },
                 Time.deltaTime);
         }

@@ -28,6 +28,8 @@ import numpy as np
 from .decode import VideoInfo
 from .distance import DistanceMap
 from .level import SurfaceSegment
+from .ledges import load_ledges
+from .segment import NO_GROUND
 from .track import Arc, smooth
 
 AUTHORED_VERSION = 3
@@ -39,6 +41,14 @@ An editor interpolates linearly between keyframes, so the raw track has corners
 no physical object would have - which is exactly the "jumps are not animated
 well" complaint. Smoothing turns where the designer clicked into how a ball
 would actually travel.
+"""
+
+LEDGE_SNAP = 0.09
+"""How close the marker must be to a ledge, in frame heights, to ride it.
+
+The marker is hand-placed and lands near the surface rather than exactly on it,
+so a tolerance is needed - but too generous a one snaps to a railing the
+character was never on.
 """
 
 SEAM_BLEND = 1.2
@@ -157,6 +167,7 @@ def build_authored_level(
     character_column: float,
     travel_direction: int = -1,
     marker: MarkerTrack | None = None,
+    ledges: Path | None = None,
     speed_curve: tuple[np.ndarray, np.ndarray] | None = None,
     analysis_width: int = 960,
     playback_file: str | None = None,
@@ -180,6 +191,12 @@ def build_authored_level(
     if marker is not None:
         blended, columns = _apply_marker(marker, sample_times, blended, columns)
 
+    names = [surface_at(timeline, t) for t in sample_times]
+    if ledges is not None and marker is not None:
+        blended, names = _snap_to_ledges(
+            ledges, marker, sample_times, columns, blended, names
+        )
+
     # Smooth the finished article, not just the marker's share of it, so the
     # handover to the segmented line does not read as the character getting the
     # shakes.
@@ -191,9 +208,9 @@ def build_authored_level(
             "d": round(float(distance_map.distance_at(t)), 3),
             "y": round(float(y), 5),
             "x": round(float(x), 5),
-            "s": surface_at(timeline, t),
+            "s": name,
         }
-        for t, y, x in zip(sample_times, blended, columns)
+        for t, y, x, name in zip(sample_times, blended, columns, names)
     ]
 
     # Screen speed, in frame widths per second. The ball needs this to roll
@@ -300,6 +317,76 @@ def build_authored_level(
         "events": events,
         "hidden": hidden,
     }
+
+
+def _snap_to_ledges(
+    path: Path,
+    marker: MarkerTrack,
+    sample_times: np.ndarray,
+    columns: np.ndarray,
+    ground: np.ndarray,
+    names: list[str],
+) -> tuple[np.ndarray, list[str]]:
+    """Put the character on the surface it is actually running along.
+
+    The marker says roughly where the designer wanted it; the extracted ledges
+    say exactly where a railing or hedge top is. Where the two agree to within
+    LEDGE_SNAP, the ledge wins - it is measured per frame and tracks perspective,
+    which a hand-drawn path cannot.
+
+    Whichever candidate is nearest the marker is chosen, so the surface is
+    identified rather than assumed: the character rides the rail while the
+    marker is on the rail, and the hedge while it is on the hedge.
+    """
+    times, lines, width, height = load_ledges(path)
+
+    result = ground.copy()
+    chosen = list(names)
+
+    for index, (time, column) in enumerate(zip(sample_times, columns)):
+        if time > marker.animated_until:
+            continue
+
+        frame = int(np.argmin(np.abs(times - time)))
+        if abs(times[frame] - time) > 0.5:
+            continue
+
+        target = float(np.interp(time, marker.times, marker.y))
+        pixel = int(np.clip(column * width, 0, width - 1))
+
+        # The timeline names the surface the character is meant to be on, which
+        # geometry cannot infer: standing on a hedge and passing in front of one
+        # look identical from a top edge alone. When that surface has a ledge,
+        # only it is considered; the ledge then supplies the exact height.
+        # Only the named surface is considered. Falling back to "nearest ledge"
+        # put the character on a hedge during stretches the timeline calls floor,
+        # simply because a hedge happened to be the closest thing detected.
+        wanted = names[index]
+        if wanted not in lines:
+            continue
+
+        best_name = None
+        best_value = 0.0
+        best_gap = LEDGE_SNAP * 2.5
+
+        for name, line in {wanted: lines[wanted]}.items():
+            window = line[frame, max(0, pixel - 20) : pixel + 21]
+            window = window[window != NO_GROUND]
+            if window.size == 0:
+                continue
+
+            value = float(np.median(window)) / height
+            gap = abs(value - target)
+            if gap < best_gap:
+                best_gap = gap
+                best_name = name
+                best_value = value
+
+        if best_name is not None:
+            result[index] = best_value
+            chosen[index] = best_name
+
+    return result, chosen
 
 
 def _apply_marker(

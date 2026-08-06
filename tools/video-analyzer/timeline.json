@@ -5,57 +5,127 @@
     "",
     "Times are converted to distances using the time<->distance map measured by",
     "the CV pipeline, so the level stays correct at any playback speed. Where the",
-    "ground sits on screen also comes from the CV run line; this file only says",
-    "WHAT happens and WHEN.",
     "",
-    "surfaces: `from` is the video time the character arrives on that surface.",
-    "  rail     - running along the railing, above ground level",
-    "  floor    - the road/lot surface from the CV run line",
-    "  sidewalk - same run line, treated as its own stretch",
-    "  grass    - after hopping the fence",
-    "events:",
-    "  jump     - clear it; being airborne at `time` succeeds",
-    "  platform - land ON it, then jump off",
-    "  dodge    - step aside rather than jump",
-    "hidden: character is not drawn (reads as teleporting)"
+    "surfaces now name what the character runs ON; `analyze ledges` supplies the",
+    "exact top edge of that surface per frame, so the ball rides the real railing",
+    "or hedge rather than a hand-drawn approximation."
   ],
-
   "surfaces": [
-    { "from": 0.0,  "surface": "rail" },
-    { "from": 7.0,  "surface": "floor" },
-    { "from": 30.0, "surface": "sidewalk" },
-    { "from": 77.5, "surface": "grass" }
+    {
+      "from": 0.0,
+      "surface": "rail"
+    },
+    {
+      "from": 7.9,
+      "surface": "floor"
+    },
+    {
+      "from": 24.5,
+      "surface": "hedge"
+    },
+    {
+      "from": 30.0,
+      "surface": "sidewalk"
+    },
+    {
+      "from": 77.5,
+      "surface": "grass"
+    }
   ],
-
   "events": [
-    { "time": 11.0, "type": "jump",     "label": "van" },
-    { "time": 18.0, "type": "jump",     "label": "van" },
-    { "time": 24.0, "type": "jump",     "label": "people" },
-    { "time": 25.2, "type": "platform", "label": "bush" },
-    { "time": 26.4, "type": "jump",     "label": "sign" },
-    { "time": 27.4, "type": "jump",     "label": "sign" },
-    { "time": 31.5, "type": "jump",     "label": "car" },
-    { "time": 34.0, "type": "jump",     "label": "car" },
-    { "time": 36.0, "type": "jump",     "label": "car" },
-    { "time": 41.0, "type": "jump",     "label": "car" },
-    { "time": 46.0, "type": "jump",     "label": "chain" },
-    { "time": 55.0, "type": "dodge",    "label": "stop sign" },
-    { "time": 56.5, "type": "dodge",    "label": "stop sign" },
-    { "time": 77.0, "type": "jump",     "label": "fence" },
-    { "time": 82.0, "type": "dodge",    "label": "sign" }
+    {
+      "time": 11.0,
+      "type": "jump",
+      "label": "van"
+    },
+    {
+      "time": 18.0,
+      "type": "jump",
+      "label": "van"
+    },
+    {
+      "time": 24.0,
+      "type": "jump",
+      "label": "people"
+    },
+    {
+      "time": 25.2,
+      "type": "platform",
+      "label": "bush"
+    },
+    {
+      "time": 26.4,
+      "type": "jump",
+      "label": "sign"
+    },
+    {
+      "time": 27.6,
+      "type": "jump",
+      "label": "sign beside hedge"
+    },
+    {
+      "time": 28.6,
+      "type": "jump",
+      "label": "sign beside hedge"
+    },
+    {
+      "time": 31.5,
+      "type": "jump",
+      "label": "car"
+    },
+    {
+      "time": 34.0,
+      "type": "jump",
+      "label": "car"
+    },
+    {
+      "time": 36.0,
+      "type": "jump",
+      "label": "car"
+    },
+    {
+      "time": 41.0,
+      "type": "jump",
+      "label": "car"
+    },
+    {
+      "time": 46.0,
+      "type": "jump",
+      "label": "chain"
+    },
+    {
+      "time": 55.0,
+      "type": "dodge",
+      "label": "stop sign"
+    },
+    {
+      "time": 56.5,
+      "type": "dodge",
+      "label": "stop sign"
+    },
+    {
+      "time": 77.0,
+      "type": "jump",
+      "label": "fence"
+    },
+    {
+      "time": 82.0,
+      "type": "dodge",
+      "label": "sign"
+    }
   ],
-
   "hidden": [
-    { "from": 62.0, "to": 75.0 }
+    {
+      "from": 62.0,
+      "to": 75.0
+    }
   ],
-
   "surfaceOffsets": {
     "rail": -0.175,
     "floor": 0.0,
     "sidewalk": 0.0,
     "grass": 0.0
   },
-
   "eventWindows": {
     "jump": 0.55,
     "platform": 0.7,

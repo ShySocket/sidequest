@@ -74,6 +74,39 @@ timeline in `timeline.json` still supplies cues, and the column eases back from
 where the marker was left to the default rather than holding the far screen edge
 for the rest of the run.
 
+## Riding real surfaces
+
+The ground segmentation answers "where is the road", which is not the question.
+Measured against the tracked marker, its foot lies inside the segmented ground
+only **38% of the time**, and where it does not it is almost always *above* it —
+because the character runs along railings, hedges and kerbs sitting on top of the
+road plane.
+
+So each runnable thing gets its own line. `analyze ledges` takes the detection
+box for a railing or hedge, prompts SAM 2 with it, and reads the topmost pixel
+per column. Detections of one class are unioned first: a hedge comes back as five
+boxes covering parts of one continuous thing.
+
+**The timeline names the surface; the ledge supplies the height.** Geometry alone
+cannot tell standing on a hedge from passing in front of one, and letting it pick
+the nearest ledge put the character on a hedge during stretches that are plainly
+floor. So `timeline.json` says which surface, and the extracted ledge says
+exactly where its top edge is, per frame, tracking perspective as the car moves.
+
+Current run, matching the described design:
+
+| Time | Surface |
+|---|---|
+| 0–7.9 s | rail |
+| 7.9–24.4 s | floor |
+| 24.5–30 s | hedge — jumped onto, signs cleared from up there, slid off at 30 |
+| 30–77.5 s | sidewalk |
+| 77.5 s+ | grass |
+
+Surface changes how the ball reads: on a rail it rolls faster and its contact
+shadow narrows, because that is most of what distinguishes a narrow rail from
+open ground.
+
 ## Editing the level
 
 `tools/video-analyzer/timeline.json` holds the whole design in video seconds:
