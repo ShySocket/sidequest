@@ -11,7 +11,7 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
-from .authored import Timeline, build_authored_level, write_authored
+from .authored import MarkerTrack, Timeline, build_authored_level, write_authored
 from .decode import VideoInfo, iter_frames, probe
 from .detect import ObstacleDetector, load_detections, save_detections
 from .distance import DistanceMap, build_distance_map, find_stopped_spans
@@ -20,6 +20,7 @@ from .obstacles import ObstacleConfig, extract_obstacles
 from .overlay import render as render_overlay
 from .segment import GroundSegmenter, SurfaceFrame, load_surfaces, save_surfaces
 from .speed import SpeedConfig, SpeedResult, estimate_speed
+from .track import TrackConfig, find_arcs, ground_baseline, parked_after, smooth, track_dot
 from .transcode import TranscodeSettings, transcode
 
 
@@ -367,6 +368,16 @@ def _command_author(args: argparse.Namespace) -> int:
         return 1
     timeline = Timeline.load(timeline_path)
 
+    marker = None
+    if args.marker:
+        marker_path = Path(args.marker).expanduser().resolve()
+        if not marker_path.exists():
+            print(f"error: no such marker track: {marker_path}", file=sys.stderr)
+            return 1
+        marker = MarkerTrack.load(marker_path)
+        print(f"marker: {len(marker.arcs)} arcs, animated to {marker.animated_until:.1f}s, "
+              f"diameter {2 * marker.median_radius:.3f}")
+
     result, distance_map, _ = _run_speed(info, args, surfaces)
     obstacle_config = ObstacleConfig(character_column=args.character_column)
     segments, _ = build_surface_segments(surfaces, distance_map, obstacle_config)
@@ -379,6 +390,7 @@ def _command_author(args: argparse.Namespace) -> int:
         timeline,
         character_column=args.character_column,
         travel_direction=result.travel_direction,
+        marker=marker,
         speed_curve=(result.times, result.speeds),
         analysis_width=args.analysis_width,
         playback_file=args.playback_file,
@@ -386,7 +398,8 @@ def _command_author(args: argparse.Namespace) -> int:
 
     counts: dict[str, int] = {}
     for event in level["events"]:
-        counts[event["type"]] = counts.get(event["type"], 0) + 1
+        key = f"{event['type']} ({event['source']})"
+        counts[key] = counts.get(key, 0) + 1
 
     heading = "right-to-left" if level["travelDirection"] < 0 else "left-to-right"
     print()
@@ -422,6 +435,69 @@ def _command_transcode(args: argparse.Namespace) -> int:
     after = output.stat().st_size / 1e6
     print(f"\n{before:.0f} MB -> {after:.0f} MB  ({after / before:.0%})")
     print(f"wrote {output}")
+    return 0
+
+
+def _command_track(args: argparse.Namespace) -> int:
+    video = _resolve_video(args.video)
+    if video is None:
+        return 1
+
+    info = probe(video)
+    _describe(info, video)
+
+    total = info.frame_count // args.stride if info.frame_count > 0 else None
+    with tqdm(total=total, unit="frame", desc="tracking marker") as progress:
+        samples = track_dot(
+            info, analysis_width=args.analysis_width, stride=args.stride, progress=progress
+        )
+
+    if not samples:
+        print("error: marker never found", file=sys.stderr)
+        return 1
+
+    times = np.array([s.time for s in samples])
+    xs = np.array([s.x for s in samples])
+    ys = np.array([s.y for s in samples])
+    radii = np.array([s.radius for s in samples])
+
+    animated_until = parked_after(times, xs, ys)
+    baseline = ground_baseline(times, ys)
+    arcs = find_arcs(times, ys, baseline)
+    arcs = [a for a in arcs if a.peak_time <= animated_until]
+
+    print()
+    print(f"samples              {len(samples)} / {total} ({len(samples) / max(total, 1):.0%})")
+    print(f"marker radius        {np.median(radii):.4f} of frame height "
+          f"(diameter {2 * np.median(radii):.3f})")
+    print(f"animated until       {animated_until:.1f}s of {info.duration:.1f}s")
+    print(f"jump arcs            {len(arcs)}")
+    for arc in arcs:
+        print(f"  peak {arc.peak_time:6.2f}s  height {arc.height:.3f}  span {arc.duration:.2f}s")
+
+    payload = {
+        "source": {"file": video.name, "fps": info.fps, "duration": info.duration},
+        "animatedUntil": round(animated_until, 3),
+        "medianRadius": round(float(np.median(radii)), 5),
+        "samples": [
+            {"t": round(float(t), 4), "x": round(float(x), 5), "y": round(float(y), 5)}
+            for t, x, y in zip(times, xs, ys)
+        ],
+        "arcs": [
+            {
+                "start": round(a.start_time, 3),
+                "peak": round(a.peak_time, 3),
+                "end": round(a.end_time, 3),
+                "height": round(a.height, 4),
+            }
+            for a in arcs
+        ],
+    }
+
+    output = Path(args.output).expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(payload, indent=1))
+    print(f"\nwrote {output}")
     return 0
 
 
@@ -500,6 +576,9 @@ def main(argv: list[str] | None = None) -> int:
     author.add_argument("--min-stop-duration", type=float, default=0.5)
     author.add_argument("--character-column", type=float, default=0.35)
     author.add_argument(
+        "--marker", help="tracked marker JSON from 'analyze track'; overrides the timeline"
+    )
+    author.add_argument(
         "--playback-file",
         default="IMG_3775.play.mp4",
         help="file name the game should play, as it appears in StreamingAssets",
@@ -514,6 +593,15 @@ def main(argv: list[str] | None = None) -> int:
     transcode_parser.add_argument("--height", type=int, default=720)
     transcode_parser.add_argument("--crf", type=int, default=23)
     transcode_parser.set_defaults(func=_command_transcode)
+
+    track_parser = subparsers.add_parser(
+        "track", help="track a coloured marker drawn over the footage"
+    )
+    track_parser.add_argument("video", help="the overlay video containing the marker")
+    track_parser.add_argument("-o", "--output", required=True, help="write the track JSON here")
+    track_parser.add_argument("--analysis-width", type=int, default=640)
+    track_parser.add_argument("--stride", type=int, default=1)
+    track_parser.set_defaults(func=_command_track)
 
     args = parser.parse_args(argv)
     return args.func(args)

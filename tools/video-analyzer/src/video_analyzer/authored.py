@@ -28,10 +28,70 @@ import numpy as np
 from .decode import VideoInfo
 from .distance import DistanceMap
 from .level import SurfaceSegment
+from .track import Arc, smooth
 
-AUTHORED_VERSION = 2
+AUTHORED_VERSION = 3
+
+MARKER_SMOOTHING = 0.55
+"""Seconds of Gaussian smoothing applied to the tracked marker path.
+
+An editor interpolates linearly between keyframes, so the raw track has corners
+no physical object would have - which is exactly the "jumps are not animated
+well" complaint. Smoothing turns where the designer clicked into how a ball
+would actually travel.
+"""
+
+SEAM_BLEND = 1.2
+"""Seconds over which the marker path hands back to the segmented ground line."""
+
+MIN_COLUMN = 0.10
+MAX_COLUMN = 0.90
+"""Keep the character fully on screen."""
+
+PATH_SMOOTHING = 0.35
+"""Seconds of smoothing applied to the whole finished path.
+
+The segmented ground line is measured per frame and carries sampling noise the
+hand-drawn marker does not, so without this the character visibly settles down
+after the marker's coverage ends.
+"""
+
+COLUMN_RETURN = 4.0
+"""Seconds to ease back to the default column after the marker stops.
+
+The marker ends parked at the far left because that is where the designer
+stopped animating, not a decision to stand there for the rest of the run - and
+obstacles arrive from that edge, so staying would leave no reaction time.
+"""
 
 DEFAULT_SURFACE = "floor"
+
+
+@dataclass(frozen=True)
+class MarkerTrack:
+    """A hand-animated marker: what the designer wanted, not what was inferred."""
+
+    times: np.ndarray
+    x: np.ndarray
+    y: np.ndarray
+    arcs: list[Arc]
+    animated_until: float
+    median_radius: float
+
+    @staticmethod
+    def load(path: Path) -> MarkerTrack:
+        raw = json.loads(path.read_text())
+        samples = raw["samples"]
+        return MarkerTrack(
+            times=np.array([s["t"] for s in samples], dtype=np.float64),
+            x=np.array([s["x"] for s in samples], dtype=np.float64),
+            y=np.array([s["y"] for s in samples], dtype=np.float64),
+            arcs=[
+                Arc(a["start"], a["peak"], a["end"], a["height"]) for a in raw.get("arcs", [])
+            ],
+            animated_until=float(raw.get("animatedUntil", 0.0)),
+            median_radius=float(raw.get("medianRadius", 0.0)),
+        )
 
 
 @dataclass(frozen=True)
@@ -96,6 +156,7 @@ def build_authored_level(
     *,
     character_column: float,
     travel_direction: int = -1,
+    marker: MarkerTrack | None = None,
     speed_curve: tuple[np.ndarray, np.ndarray] | None = None,
     analysis_width: int = 960,
     playback_file: str | None = None,
@@ -114,14 +175,25 @@ def build_authored_level(
     # character steps up onto the rail rather than teleporting - the same
     # continuity concern the CV path had.
     blended = ground + _smooth_step(offsets, sample_times, ramp=0.45)
+    columns = np.full(sample_times.size, character_column)
+
+    if marker is not None:
+        blended, columns = _apply_marker(marker, sample_times, blended, columns)
+
+    # Smooth the finished article, not just the marker's share of it, so the
+    # handover to the segmented line does not read as the character getting the
+    # shakes.
+    blended = smooth(sample_times, blended, PATH_SMOOTHING)
+    columns = np.clip(smooth(sample_times, columns, PATH_SMOOTHING), MIN_COLUMN, MAX_COLUMN)
 
     path = [
         {
             "d": round(float(distance_map.distance_at(t)), 3),
             "y": round(float(y), 5),
+            "x": round(float(x), 5),
             "s": surface_at(timeline, t),
         }
-        for t, y in zip(sample_times, blended)
+        for t, y, x in zip(sample_times, blended, columns)
     ]
 
     # Screen speed, in frame widths per second. The ball needs this to roll
@@ -143,7 +215,27 @@ def build_authored_level(
     ]
 
     events = []
-    for index, entry in enumerate(timeline.events):
+
+    # Marker arcs describe the jumps the designer actually drew, so they replace
+    # the hand-typed cues wherever the marker was animated. Beyond that the
+    # timeline is all there is.
+    marker_end = marker.animated_until if marker is not None else -1.0
+    entries: list[dict] = []
+    if marker is not None:
+        for arc in marker.arcs:
+            entries.append(
+                {
+                    "time": arc.peak_time,
+                    "type": "jump",
+                    "label": "marker",
+                    "height": arc.height,
+                    "source": "marker",
+                }
+            )
+    entries.extend(e for e in timeline.events if float(e["time"]) > marker_end)
+    entries.sort(key=lambda e: e["time"])
+
+    for index, entry in enumerate(entries):
         time = float(entry["time"])
         kind = entry.get("type", "jump")
         window = float(timeline.event_windows.get(kind, 0.55))
@@ -155,6 +247,10 @@ def build_authored_level(
                 "time": round(time, 3),
                 "distance": round(float(distance_map.distance_at(time)), 3),
                 "window": round(window, 3),
+                # Per-cue height, so a jump drawn small stays small rather than
+                # every jump using one tuned constant.
+                "height": round(float(entry.get("height", 0.0)), 4),
+                "source": entry.get("source", "timeline"),
                 # Half-width in distance, not seconds: the game tracks distance,
                 # and a fixed number of seconds would be a different amount of
                 # road depending on how fast the car was going just there.
@@ -201,6 +297,48 @@ def build_authored_level(
         "events": events,
         "hidden": hidden,
     }
+
+
+def _apply_marker(
+    marker: MarkerTrack,
+    sample_times: np.ndarray,
+    ground: np.ndarray,
+    columns: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Replace the inferred path with the designer's, where they drew one.
+
+    The marker's own vertical baseline is used rather than the segmented ground
+    line: where the two disagree, the designer's intent wins. Past the point they
+    stopped animating, the segmented line takes over again, eased across so the
+    handover is not a step.
+    """
+    from .track import ground_baseline
+
+    baseline = ground_baseline(marker.times, marker.y)
+    marker_ground = smooth(marker.times, baseline, MARKER_SMOOTHING)
+    marker_column = smooth(marker.times, marker.x, MARKER_SMOOTHING)
+
+    sampled_ground = np.interp(sample_times, marker.times, marker_ground)
+    sampled_column = np.interp(sample_times, marker.times, marker_column)
+    sampled_column = np.clip(sampled_column, MIN_COLUMN, MAX_COLUMN)
+
+    # 1 while the marker was animated, easing to 0 over the seam.
+    weight = np.clip((marker.animated_until - sample_times) / SEAM_BLEND, 0.0, 1.0)
+    weight = weight * weight * (3.0 - 2.0 * weight)
+
+    # Ease from where the marker left the character back to the default column
+    # over COLUMN_RETURN seconds, rather than holding the far edge for the rest
+    # of the run.
+    default_column = float(columns[-1]) if columns.size else 0.35
+    ease = np.clip((sample_times - marker.animated_until) / COLUMN_RETURN, 0.0, 1.0)
+    ease = ease * ease * (3.0 - 2.0 * ease)
+    held = float(np.clip(marker_column[-1], MIN_COLUMN, MAX_COLUMN))
+    after = held + (default_column - held) * ease
+
+    return (
+        ground * (1.0 - weight) + sampled_ground * weight,
+        after * (1.0 - weight) + sampled_column * weight,
+    )
 
 
 def _smooth_step(values: np.ndarray, times: np.ndarray, ramp: float) -> np.ndarray:

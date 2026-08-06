@@ -33,11 +33,17 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     [SerializeField] VideoRunnerBallView view;
 
     [Header("Jump")]
-    [Tooltip("Peak height as a fraction of the video frame's height.")]
-    [SerializeField] float jumpHeight = 0.20f;
+    [Tooltip("Peak height when the cue records none, as a fraction of frame height.")]
+    [SerializeField] float jumpHeight = 0.22f;
 
-    [Tooltip("Seconds from take-off to landing.")]
-    [SerializeField] float airTime = 0.95f;
+    [Tooltip("Bounds on a cue's recorded height, so a huge one stays on screen.")]
+    [SerializeField] Vector2 jumpHeightRange = new Vector2(0.12f, 0.50f);
+
+    [Tooltip("Seconds from take-off to landing for a default-height jump.")]
+    [SerializeField] float airTime = 1.0f;
+
+    [Tooltip("How far ahead to look for the cue this jump is aimed at.")]
+    [SerializeField] float cueLookahead = 1.4f;
 
     [Tooltip("A tap this long before landing still buffers the next jump.")]
     [SerializeField] float inputBuffer = 0.15f;
@@ -50,7 +56,9 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
     [Header("Size")]
     [Tooltip("Ball diameter as a fraction of the video frame's height.")]
-    [SerializeField] float characterHeight = 0.11f;
+    // 0.173 is the tracked marker's own diameter, so the ball matches the size
+    // the movement was drawn at.
+    [SerializeField] float characterHeight = 0.173f;
 
     [Tooltip("Diameter multiplier where the ground is highest in frame (furthest away).")]
     [SerializeField] float farScale = 0.72f;
@@ -61,11 +69,27 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     [Tooltip("Ground line heights, normalized, that map to far and near scale.")]
     [SerializeField] Vector2 depthRange = new Vector2(0.45f, 0.95f);
 
+    [Header("Smoothing")]
+    [Tooltip("Seconds for the character to settle onto a change in the ground line.")]
+    // The path is smoothed when authored, but the ball still benefits from a
+    // critically damped follow: it removes the last of the sampling stair-step
+    // and makes surface changes read as easing rather than snapping.
+    [SerializeField] float groundSmoothing = 0.09f;
+
+    [Tooltip("Seconds for the character to settle onto a change in column.")]
+    [SerializeField] float columnSmoothing = 0.14f;
+
     readonly List<EventState> states = new List<EventState>();
 
     Stance stance = Stance.Grounded;
     float airHeight;
     float verticalVelocity;
+    float activeJumpHeight;
+
+    float smoothedGround = -1f;
+    float groundVelocity;
+    float smoothedColumn = -1f;
+    float columnVelocity;
     float dodgeElapsed = -1f;
     float bufferedJumpAt = -1f;
     int cleared;
@@ -217,10 +241,11 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
         if (stance == Stance.Grounded && jumpQueued)
         {
-            // A symmetric arc of the configured height and duration:
+            activeJumpHeight = HeightForJump();
+
+            // A symmetric arc of the chosen height and duration:
             //   v0 = 4h / t, g = 8h / t^2
-            float takeOff = 4f * jumpHeight / Mathf.Max(airTime, 0.01f);
-            verticalVelocity = takeOff;
+            verticalVelocity = 4f * activeJumpHeight / Mathf.Max(ArcDuration(), 0.01f);
             airHeight = 0.0001f;
             stance = Stance.Airborne;
             bufferedJumpAt = -1f;
@@ -232,7 +257,9 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             return;
         }
 
-        float gravity = 8f * jumpHeight / Mathf.Max(airTime * airTime, 0.0001f);
+        float arc = ArcDuration();
+        float gravity =
+            8f * Mathf.Max(activeJumpHeight, 0.01f) / Mathf.Max(arc * arc, 0.0001f);
         verticalVelocity -= gravity * deltaTime;
         airHeight += verticalVelocity * deltaTime;
 
@@ -291,6 +318,64 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         }
     }
 
+    /// <summary>Take-off speed of the jump in progress, for normalizing stretch.</summary>
+    float TakeOffSpeed()
+    {
+        return 4f * Mathf.Max(activeJumpHeight, 0.01f) / Mathf.Max(ArcDuration(), 0.01f);
+    }
+
+    /// <summary>
+    /// Seconds from take-off to landing for the jump in progress.
+    /// </summary>
+    /// <remarks>
+    /// Scales with the square root of height, as a real ballistic arc does, so a
+    /// tall jump hangs longer instead of being flung upward at an implausible
+    /// speed to fit a fixed duration.
+    /// </remarks>
+    float ArcDuration()
+    {
+        return airTime * Mathf.Sqrt(
+            Mathf.Max(activeJumpHeight, 0.01f) / Mathf.Max(jumpHeight, 0.01f));
+    }
+
+    /// <summary>
+    /// How high this jump should go, taken from the cue it is aimed at.
+    /// </summary>
+    /// <remarks>
+    /// Heights come from the tracked marker, so a jump the designer drew small
+    /// stays small. Without this every jump used one tuned constant and the
+    /// drawn variation was lost.
+    /// </remarks>
+    float HeightForJump()
+    {
+        float distance = director.Distance;
+        float best = jumpHeight;
+        float bestGap = float.MaxValue;
+
+        for (int i = 0; i < states.Count; i++)
+        {
+            EventState state = states[i];
+            if (state.Resolved || state.Event.height <= 0f)
+            {
+                continue;
+            }
+
+            float gap = state.Event.distance - distance;
+            if (gap < -state.Event.windowDistance || gap > cueLookahead * state.Event.windowDistance * 4f)
+            {
+                continue;
+            }
+
+            if (Mathf.Abs(gap) < bestGap)
+            {
+                bestGap = Mathf.Abs(gap);
+                best = state.Event.height;
+            }
+        }
+
+        return Mathf.Clamp(best, jumpHeightRange.x, jumpHeightRange.y);
+    }
+
     bool Satisfies(VideoLevelEventType type)
     {
         return type switch
@@ -307,8 +392,24 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             return;
         }
 
-        float column = director.Level.CharacterColumn;
+        float column = director.Level.ColumnAtDistance(distance);
         float groundY = director.Level.GroundAtDistance(distance);
+
+        // Critically damped follow, so the ball eases onto changes in the ground
+        // line and its lane instead of tracking every sample exactly.
+        if (smoothedGround < 0f)
+        {
+            smoothedGround = groundY;
+            smoothedColumn = column;
+        }
+
+        smoothedGround = Mathf.SmoothDamp(
+            smoothedGround, groundY, ref groundVelocity, groundSmoothing);
+        smoothedColumn = Mathf.SmoothDamp(
+            smoothedColumn, column, ref columnVelocity, columnSmoothing);
+
+        groundY = smoothedGround;
+        column = smoothedColumn;
 
         int heading = director.Level.TravelDirection;
 
@@ -341,8 +442,10 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                     Diameter = diameter,
                     ScreenSpeed = director.Level.ScreenSpeedAtDistance(distance)
                         * background.FrameWidthInWorld,
-                    VerticalVelocity = verticalVelocity * frameHeight,
-                    JumpHeight = jumpHeight * frameHeight,
+                    VerticalSpeed01 = TakeOffSpeed() > 0f
+                        ? Mathf.Abs(verticalVelocity) / TakeOffSpeed()
+                        : 0f,
+                    JumpHeight = Mathf.Max(activeJumpHeight, jumpHeight) * frameHeight,
                     Heading = heading,
                     Hidden = stance == Stance.Hidden
                 },
@@ -361,5 +464,9 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         bufferedJumpAt = -1f;
         stance = Stance.Grounded;
         lastOutcome = string.Empty;
+        smoothedGround = -1f;
+        smoothedColumn = -1f;
+        groundVelocity = 0f;
+        columnVelocity = 0f;
     }
 }

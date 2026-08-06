@@ -18,7 +18,9 @@ Separate from `RunnerPrototype`, which is untouched.
    the timeline):
 
    ```bash
-   uv run analyze author ../../IMG_3775.mov -o out/IMG_3775.authored.json --surfaces out/IMG_3775.surfaces.npz
+   uv run analyze track /path/to/IMG_3775_V1.mp4 -o out/IMG_3775.track.json --stride 2
+   uv run analyze author ../../IMG_3775.mov -o out/IMG_3775.authored.json \
+       --surfaces out/IMG_3775.surfaces.npz --marker out/IMG_3775.track.json
    ./copy-to-unity.sh
    ```
 
@@ -41,6 +43,36 @@ re-running it is always a safe way back to a working scene.
 The HUD shows the current **video time**, which is the unit `timeline.json` is
 written in — so a cue that feels early or late can be read off the screen and
 corrected directly.
+
+## Where the movement comes from
+
+A marker animated by hand over the footage (`IMG_3775_V1.mp4`, the red circle)
+describes how the character should move far better than anything inferred: it
+carries intent. `analyze track` follows it and turns it into the level's ground
+path, its horizontal position, and its jumps.
+
+Finding it needs more than colour. Red brick fills large parts of this footage,
+and a loose red threshold latches onto buildings — measured, that inflated the
+marker's apparent radius from 0.09 to 0.25 of frame height between t=32s and
+t=48s. Three constraints separate them: a narrow hue band (marker H=176 against
+brick H=35), a circularity test, and continuity between frames.
+
+The tracked arcs agree with the hand-typed timeline closely — 8 of 10 within
+0.7s, the 26.4s sign exact — and found one the timeline missed, the hop at 7.8s
+where the character leaves the rail.
+
+**The marker supplies timing, position and height; the game supplies the
+animation.** An editor interpolates linearly between keyframes, so the raw track
+has corners no physical object would have — which is what made the original jumps
+look wrong. Replaying it verbatim would replay that. Instead the game takes each
+arc's peak time and height and generates a real ballistic curve, with air time
+scaling as the square root of height so a tall jump hangs rather than being
+flung.
+
+The marker stops being animated at 46.5s of 87.6s. Past that the hand-typed
+timeline in `timeline.json` still supplies cues, and the column eases back from
+where the marker was left to the default rather than holding the far screen edge
+for the rest of the run.
 
 ## Editing the level
 
@@ -120,7 +152,7 @@ Four cues do the work of making it look present, in rough order of importance:
 | Contact shadow | Without it the ball reads as a sticker. Size and opacity track height — that is what says *airborne* rather than *bigger* |
 | Rolling | A ball that translates without rotating looks dragged. Rate comes from the level's measured screen speed, so it matches the world sliding past |
 | Perspective scale | The ground line rises and falls as the road nears and recedes; the ball scales with it or it appears to swim |
-| Squash and stretch | Stretch through the arc, squash on landing — makes a jump read as effort rather than a slide upward |
+| Squash and stretch | Stretch through the arc, squash on landing — makes a jump read as effort rather than a slide upward. Driven by speed as a fraction of take-off, so it means the same at any jump height |
 
 ## Design notes
 

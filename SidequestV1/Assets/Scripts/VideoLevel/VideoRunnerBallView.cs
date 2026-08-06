@@ -33,7 +33,14 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         /// <summary>Screen speed in frame widths per second, for the roll rate.</summary>
         public float ScreenSpeed;
 
-        public float VerticalVelocity;
+        /// <summary>Vertical speed as a fraction of this jump's take-off speed, 0..1.</summary>
+        /// <remarks>
+        /// Normalized rather than absolute so the stretch means the same thing
+        /// whatever the jump height. An absolute value sat permanently at the
+        /// clamp once cue heights came from the tracked marker, leaving the ball
+        /// egg-shaped for the whole arc.
+        /// </remarks>
+        public float VerticalSpeed01;
         public float JumpHeight;
         public int Heading;
         public bool Hidden;
@@ -63,10 +70,9 @@ public sealed class VideoRunnerBallView : MonoBehaviour
     [SerializeField] float shadowFlatten = 0.34f;
 
     [Header("Squash and stretch")]
-    [SerializeField] float stretchPerVelocity = 0.16f;
-    [SerializeField] float maxStretch = 0.28f;
-    [SerializeField] float landingSquash = 0.30f;
-    [SerializeField] float landingRecovery = 6f;
+    [SerializeField] float maxStretch = 0.17f;
+    [SerializeField] float landingSquash = 0.22f;
+    [SerializeField] float landingRecovery = 5f;
 
     [Header("Roll")]
     [Tooltip("Extra roll beyond rolling without slipping. 1 = physically exact.")]
@@ -125,8 +131,8 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         // about the axis pointing out of the screen.
         rollAngle += degreesPerSecond * deltaTime * -pose.Heading;
 
-        float stretch = Mathf.Clamp(
-            Mathf.Abs(pose.VerticalVelocity) * stretchPerVelocity, 0f, maxStretch);
+        // Fastest at take-off and landing, round at the apex.
+        float stretch = Mathf.Clamp01(pose.VerticalSpeed01) * maxStretch;
         float verticalScale = 1f + stretch - squash;
         // Volume-preserving, so the ball never looks like it changed mass.
         float horizontalScale = 1f / Mathf.Max(verticalScale, 0.01f);

@@ -63,6 +63,15 @@ public class VideoLevelPathPoint
 {
     public float d;
     public float y;
+
+    /// <summary>Where the character sits horizontally, 0..1 across the frame.</summary>
+    /// <remarks>
+    /// Per-sample rather than one fixed column: the tracked marker traverses the
+    /// screen right to left over the run, and pinning the character to a column
+    /// would throw away that intent.
+    /// </remarks>
+    public float x;
+
     public string s;
 }
 
@@ -87,6 +96,12 @@ public class VideoLevelEvent
 
     /// <summary>Half-width of the success window, in distance.</summary>
     public float windowDistance;
+
+    /// <summary>Peak height the designer drew for this jump, 0..1 of frame height.</summary>
+    /// <remarks>Zero means none was recorded, and the tuned default is used.</remarks>
+    public float height;
+
+    public string source;
 }
 
 [Serializable]

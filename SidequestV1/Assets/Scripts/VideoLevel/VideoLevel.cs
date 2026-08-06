@@ -144,6 +144,37 @@ public sealed class VideoLevel
         return Mathf.Lerp(a.y, b.y, alpha);
     }
 
+    /// <summary>Horizontal position of the character at a distance, 0..1.</summary>
+    /// <remarks>
+    /// Per-sample rather than one fixed column: the tracked marker traverses the
+    /// screen right to left over the run. Levels authored before the marker
+    /// existed carry no x, and fall back to the fixed column.
+    /// </remarks>
+    public float ColumnAtDistance(float distance)
+    {
+        int index = UpperBound(pathDistances, distance);
+        if (index <= 0)
+        {
+            return Column(data.path[0]);
+        }
+
+        if (index >= data.path.Count)
+        {
+            return Column(data.path[data.path.Count - 1]);
+        }
+
+        VideoLevelPathPoint a = data.path[index - 1];
+        VideoLevelPathPoint b = data.path[index];
+        float span = b.d - a.d;
+        float alpha = span > 0f ? Mathf.Clamp01((distance - a.d) / span) : 0f;
+        return Mathf.Lerp(Column(a), Column(b), alpha);
+    }
+
+    float Column(VideoLevelPathPoint point)
+    {
+        return point.x > 0f ? point.x : data.characterColumn;
+    }
+
     /// <summary>How fast the world slides past, in frame widths per second.</summary>
     /// <remarks>
     /// Zero when the level carries no speed track, which reads as a ball that
