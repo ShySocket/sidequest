@@ -56,6 +56,7 @@ public static class RunnerPrototypeSetup
         gpsObject.transform.SetParent(gameSystems.transform);
         LocationPermissionService permissionService = gpsObject.AddComponent<LocationPermissionService>();
         UnityGpsSpeedProvider gpsProvider = gpsObject.AddComponent<UnityGpsSpeedProvider>();
+        UnityDeviceMotionProvider motionProvider = gpsObject.AddComponent<UnityDeviceMotionProvider>();
         SetObjectReference(gpsProvider, "configuration", configuration);
         SetObjectReference(gpsProvider, "permissionService", permissionService);
 
@@ -65,11 +66,12 @@ public static class RunnerPrototypeSetup
         SetObjectReference(speedController, "configuration", configuration);
         SetObjectReference(speedController, "mockSpeedProvider", mockProvider);
         SetObjectReference(speedController, "unityGpsSpeedProvider", gpsProvider);
+        SetObjectReference(speedController, "deviceMotionProvider", motionProvider);
         SetEnum(speedController, "providerMode", (int)SpeedProviderMode.Auto);
 
         GameObject environment = new GameObject("Environment");
-        CreateGround(environment.transform, squareSprite);
-        CreateObstacles(environment.transform, squareSprite);
+        Transform ground = CreateGround(environment.transform, squareSprite);
+        Transform obstaclesRoot = CreateObstacles(environment.transform, squareSprite);
 
         GameObject player = CreatePlayer(
             squareSprite,
@@ -77,6 +79,10 @@ public static class RunnerPrototypeSetup
             configuration,
             jumpReference,
             speedController);
+        EndlessTrackLooper trackLooper = environment.AddComponent<EndlessTrackLooper>();
+        SetObjectReference(trackLooper, "player", player.transform);
+        SetObjectReference(trackLooper, "ground", ground);
+        SetObjectReference(trackLooper, "obstaclesRoot", obstaclesRoot);
         Rigidbody2D playerBody = player.GetComponent<Rigidbody2D>();
         RunnerMotor runnerMotor = player.GetComponent<RunnerMotor>();
         GroundCheck groundCheck = player.GetComponent<GroundCheck>();
@@ -203,9 +209,16 @@ public static class RunnerPrototypeSetup
         if (activeInputHandler != null)
         {
             activeInputHandler.intValue = 1;
-            settings.ApplyModifiedProperties();
         }
 
+        SerializedProperty cameraUsageDescription = settings.FindProperty("cameraUsageDescription");
+        if (cameraUsageDescription != null)
+        {
+            cameraUsageDescription.stringValue =
+                "Sidequest uses the rear camera only when you turn on the live background.";
+        }
+
+        settings.ApplyModifiedProperties();
         PlayerSettings.defaultInterfaceOrientation = UIOrientation.AutoRotation;
         PlayerSettings.allowedAutorotateToPortrait = false;
         PlayerSettings.allowedAutorotateToPortraitUpsideDown = false;
@@ -219,6 +232,8 @@ public static class RunnerPrototypeSetup
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n"
             + "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\">\n"
             + "  <uses-permission android:name=\"android.permission.ACCESS_FINE_LOCATION\" />\n"
+            + "  <uses-permission android:name=\"android.permission.CAMERA\" />\n"
+            + "  <uses-feature android:name=\"android.hardware.camera.any\" android:required=\"false\" />\n"
             + "  <application />\n"
             + "</manifest>\n";
         File.WriteAllText(manifestPath, manifest);
@@ -239,17 +254,31 @@ public static class RunnerPrototypeSetup
         serialized.FindProperty("speedHistoryDurationSeconds").floatValue = 5f;
         serialized.FindProperty("accelerationSmoothingTime").floatValue = 0.25f;
         serialized.FindProperty("decelerationSmoothingTime").floatValue = 0.35f;
-        serialized.FindProperty("desiredGpsAccuracyMeters").floatValue = 5f;
-        serialized.FindProperty("gpsUpdateDistanceMeters").floatValue = 1f;
-        serialized.FindProperty("gpsInitializationTimeoutSeconds").floatValue = 20f;
+        serialized.FindProperty("desiredGpsAccuracyMeters").floatValue = 10f;
+        serialized.FindProperty("gpsUpdateDistanceMeters").floatValue = 0.1f;
+        serialized.FindProperty("gpsInitializationTimeoutSeconds").floatValue = 45f;
         serialized.FindProperty("gpsPollingIntervalSeconds").floatValue = 0.25f;
-        serialized.FindProperty("maximumAcceptedHorizontalAccuracyMeters").floatValue = 25f;
+        serialized.FindProperty("maximumAcceptedHorizontalAccuracyMeters").floatValue = 75f;
         serialized.FindProperty("maximumAcceptedPhysicalSpeedMetersPerSecond").floatValue = 80f;
-        serialized.FindProperty("gpsStaleTimeoutSeconds").floatValue = 3f;
+        serialized.FindProperty("gpsStaleTimeoutSeconds").floatValue = 15f;
         serialized.FindProperty("stopThresholdMetersPerSecond").floatValue = 0.75f;
-        serialized.FindProperty("requiredConsecutiveLowSpeedReadings").intValue = 3;
+        serialized.FindProperty("requiredConsecutiveLowSpeedReadings").intValue = 1;
+        serialized.FindProperty("estimatorGpsStaleThresholdSeconds").floatValue = 1.5f;
+        serialized.FindProperty("estimatorGpsMissingThresholdSeconds").floatValue = 30f;
+        serialized.FindProperty("gpsReturnBlendSeconds").floatValue = 1.5f;
+        serialized.FindProperty("hardBrakingThresholdMetersPerSecondSquared").floatValue = -2.3f;
+        serialized.FindProperty("hardBrakingDurationSeconds").floatValue = 0.18f;
+        serialized.FindProperty("accelerationNoiseDeadZoneMetersPerSecondSquared").floatValue = 0.2f;
+        serialized.FindProperty("healthyGpsWeight").floatValue = 0.9f;
+        serialized.FindProperty("maximumAccelerationMetersPerSecondSquared").floatValue = 8f;
+        serialized.FindProperty("hardStopHoldSeconds").floatValue = 0.75f;
+        serialized.FindProperty("missingSpeedRetentionPerSecond").floatValue = 0.98f;
+        serialized.FindProperty("motionSampleRateHertz").floatValue = 50f;
         serialized.FindProperty("maximumGameSpeed").floatValue = 10f;
         serialized.FindProperty("jumpVelocity").floatValue = 8f;
+        serialized.FindProperty("speedCurveReferenceMetersPerSecond").floatValue = 30f;
+        serialized.FindProperty("speedCurveLogFactor").floatValue = 0.08f;
+        serialized.FindProperty("speedCurveLinearWeight").floatValue = 0.85f;
         serialized.FindProperty("physicalToGameSpeedCurve").animationCurveValue = new AnimationCurve(
             new Keyframe(0f, 0f),
             new Keyframe(2f, 2f),
@@ -341,16 +370,17 @@ public static class RunnerPrototypeSetup
         return reference;
     }
 
-    private static void CreateGround(Transform environment, Sprite sprite)
+    private static Transform CreateGround(Transform environment, Sprite sprite)
     {
         GameObject ground = CreateSpriteObject("Ground", sprite, "Ground");
         ground.transform.SetParent(environment);
         ground.transform.position = new Vector3(30f, -0.5f, 0f);
         ground.transform.localScale = new Vector3(80f, 1f, 1f);
         ground.AddComponent<BoxCollider2D>();
+        return ground.transform;
     }
 
-    private static void CreateObstacles(Transform environment, Sprite sprite)
+    private static Transform CreateObstacles(Transform environment, Sprite sprite)
     {
         GameObject root = new GameObject("Obstacles");
         root.transform.SetParent(environment);
@@ -368,6 +398,8 @@ public static class RunnerPrototypeSetup
             obstacle.transform.SetParent(root.transform);
             obstacle.transform.position = new Vector3(positions[i], 0.5f, 0f);
         }
+
+        return root.transform;
     }
 
     private static GameObject CreatePlayer(

@@ -208,16 +208,19 @@ public sealed class UnityGpsSpeedProvider : MonoBehaviour, IVehicleSpeedProvider
             return;
         }
 
+        // Every windowed estimate is forwarded immediately. Holding low-speed
+        // readings back until several arrive in a row added seconds of stop
+        // latency, and the movement estimator already rejects isolated jitter
+        // in both directions.
         float acceptedSpeed = calculatedSpeed;
         if (acceptedSpeed < configuration.StopThresholdMetersPerSecond)
         {
             consecutiveLowSpeedReadings++;
-            if (consecutiveLowSpeedReadings < configuration.RequiredConsecutiveLowSpeedReadings)
+            if (consecutiveLowSpeedReadings
+                >= configuration.RequiredConsecutiveLowSpeedReadings)
             {
-                return;
+                acceptedSpeed = 0f;
             }
-
-            acceptedSpeed = 0f;
         }
         else
         {

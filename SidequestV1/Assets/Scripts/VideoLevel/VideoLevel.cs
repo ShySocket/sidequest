@@ -20,6 +20,11 @@ public sealed class VideoLevel
     readonly float[] pathDistances;
     readonly float[] speedDistances;
     readonly float[] speedValues;
+    readonly float[] ambientDistances;
+    readonly float[] ambientR;
+    readonly float[] ambientG;
+    readonly float[] ambientB;
+    readonly Vector2 depthRange;
 
     VideoLevel(VideoLevelData data)
     {
@@ -38,6 +43,21 @@ public sealed class VideoLevel
         {
             pathDistances[i] = data.path[i].d;
         }
+
+        int ambientCount = data.ambient != null ? data.ambient.Count : 0;
+        ambientDistances = new float[ambientCount];
+        ambientR = new float[ambientCount];
+        ambientG = new float[ambientCount];
+        ambientB = new float[ambientCount];
+        for (int i = 0; i < ambientCount; i++)
+        {
+            ambientDistances[i] = data.ambient[i].d;
+            ambientR[i] = data.ambient[i].r;
+            ambientG[i] = data.ambient[i].g;
+            ambientB[i] = data.ambient[i].b;
+        }
+
+        depthRange = ComputeDepthRange();
 
         int speedCount = data.screenSpeed != null ? data.screenSpeed.Count : 0;
         speedDistances = new float[speedCount];
@@ -176,6 +196,48 @@ public sealed class VideoLevel
     float Column(VideoLevelPathPoint point)
     {
         return point.x > 0f ? point.x : data.characterColumn;
+    }
+
+    /// <summary>Light the footage casts where the character stands, ~white in ordinary daylight.</summary>
+    public Color AmbientAtDistance(float distance)
+    {
+        if (ambientDistances.Length == 0)
+        {
+            return Color.white;
+        }
+
+        return new Color(
+            Interpolate(ambientDistances, ambientR, distance),
+            Interpolate(ambientDistances, ambientG, distance),
+            Interpolate(ambientDistances, ambientB, distance));
+    }
+
+    /// <summary>Ground-line heights spanning far (x) to near (y), for perspective scale.</summary>
+    /// <remarks>
+    /// Measured from this level's own path percentiles rather than a tuned
+    /// constant, so the ball's size range adapts to how much depth the clip's
+    /// path actually covers.
+    /// </remarks>
+    public Vector2 PathDepthRange => depthRange;
+
+    Vector2 ComputeDepthRange()
+    {
+        if (data.path == null || data.path.Count < 20)
+        {
+            return new Vector2(0.45f, 0.95f);
+        }
+
+        var heights = new float[data.path.Count];
+        for (int i = 0; i < data.path.Count; i++)
+        {
+            heights[i] = data.path[i].y;
+        }
+
+        System.Array.Sort(heights);
+        float far = heights[(int)(heights.Length * 0.05f)];
+        float near = heights[(int)(heights.Length * 0.95f)];
+        // A nearly flat path gives no usable range; keep the tuned default.
+        return near - far < 0.08f ? new Vector2(0.45f, 0.95f) : new Vector2(far, near);
     }
 
     /// <summary>Which surface the character is on: rail, hedge, sidewalk, grass, floor.</summary>

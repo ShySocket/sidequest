@@ -20,6 +20,14 @@ public sealed class LevelDirector : MonoBehaviour
 {
     public enum PlaybackMode
     {
+        /// <summary>NativeRate at a desk, VehicleSpeed on a phone. The default.</summary>
+        /// <remarks>
+        /// First in the enum on purpose: scenes saved before this mode existed
+        /// serialized 0, so they migrate to Auto rather than silently pinning
+        /// the old behaviour.
+        /// </remarks>
+        Auto,
+
         /// <summary>Advance at the clip's own rate, scaled by <see cref="speedMultiplier"/>.</summary>
         NativeRate,
 
@@ -32,7 +40,7 @@ public sealed class LevelDirector : MonoBehaviour
 
     [SerializeField] string levelFileName = "IMG_3775.authored.json";
     [SerializeField] VideoBackground background;
-    [SerializeField] PlaybackMode playbackMode = PlaybackMode.NativeRate;
+    [SerializeField] PlaybackMode playbackMode = PlaybackMode.Auto;
 
     [Tooltip("Scales playback in NativeRate mode. 1 = the speed the clip was filmed at.")]
     [Range(0.25f, 3f)]
@@ -73,6 +81,17 @@ public sealed class LevelDirector : MonoBehaviour
         set => speedMultiplier = Mathf.Clamp(value, 0f, MaxPlaybackSpeed);
     }
 
+    /// <summary>The mode actually in force after Auto resolves.</summary>
+    /// <remarks>
+    /// In a vehicle the phone's own motion drives progress; at a desk the clip
+    /// plays at its own pace. Mirrors VehicleSpeedController's Auto, which picks
+    /// Mock in the editor and GPS on device, so the whole chain follows the
+    /// hardware it is running on.
+    /// </remarks>
+    public PlaybackMode ResolvedMode => playbackMode != PlaybackMode.Auto
+        ? playbackMode
+        : Application.isMobilePlatform ? PlaybackMode.VehicleSpeed : PlaybackMode.NativeRate;
+
     public event Action LevelCompleted;
 
     void Awake()
@@ -93,6 +112,70 @@ public sealed class LevelDirector : MonoBehaviour
         {
             background.Begin(level.PlaybackFileName);
         }
+
+        if (ResolvedMode == PlaybackMode.VehicleSpeed)
+        {
+            EnsureVehicleController();
+        }
+    }
+
+    /// <summary>
+    /// Find or build the vehicle-speed stack, so a scene that never wired one
+    /// still moves with the vehicle on device.
+    /// </summary>
+    /// <remarks>
+    /// Built inactive first: VehicleSpeedController reads its configuration in
+    /// Awake and disables itself when missing, so every field has to be set by
+    /// reflection before activation - the same order PlayModeTestFactory uses.
+    /// A freshly created RunnerConfiguration carries the tuned serialized
+    /// defaults, which is exactly what an unwired scene should get.
+    /// </remarks>
+    void EnsureVehicleController()
+    {
+        if (vehicleSpeedController != null)
+        {
+            return;
+        }
+
+        vehicleSpeedController = FindFirstObjectByType<VehicleSpeedController>();
+        if (vehicleSpeedController != null)
+        {
+            return;
+        }
+
+        var holder = new GameObject("VehicleSpeed (auto)");
+        holder.SetActive(false);
+
+        var mock = holder.AddComponent<MockSpeedProvider>();
+        var permission = holder.AddComponent<LocationPermissionService>();
+        var gps = holder.AddComponent<UnityGpsSpeedProvider>();
+        var motion = holder.AddComponent<UnityDeviceMotionProvider>();
+        var controller = holder.AddComponent<VehicleSpeedController>();
+
+        var configuration = ScriptableObject.CreateInstance<RunnerConfiguration>();
+        SetPrivateField(gps, "configuration", configuration);
+        SetPrivateField(gps, "permissionService", permission);
+        SetPrivateField(controller, "configuration", configuration);
+        SetPrivateField(controller, "mockSpeedProvider", mock);
+        SetPrivateField(controller, "unityGpsSpeedProvider", gps);
+        SetPrivateField(controller, "deviceMotionProvider", motion);
+
+        holder.SetActive(true);
+        vehicleSpeedController = controller;
+    }
+
+    static void SetPrivateField(object target, string name, object value)
+    {
+        var field = target.GetType().GetField(
+            name,
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        if (field == null)
+        {
+            Debug.LogError($"LevelDirector: no field '{name}' on {target.GetType().Name}");
+            return;
+        }
+
+        field.SetValue(target, value);
     }
 
     void Update()
@@ -108,7 +191,7 @@ public sealed class LevelDirector : MonoBehaviour
             player.Play();
         }
 
-        if (playbackMode == PlaybackMode.NativeRate)
+        if (ResolvedMode == PlaybackMode.NativeRate)
         {
             // The video leads and distance follows it. Forcing the decoder to a
             // computed time instead means any moment it cannot keep up - a fast
@@ -137,7 +220,7 @@ public sealed class LevelDirector : MonoBehaviour
 
     void AdvanceDistance(float deltaTime)
     {
-        if (playbackMode == PlaybackMode.NativeRate)
+        if (ResolvedMode == PlaybackMode.NativeRate)
         {
             // Advance along the clip's own timeline, then convert back. Going
             // through distance rather than setting video time directly keeps this

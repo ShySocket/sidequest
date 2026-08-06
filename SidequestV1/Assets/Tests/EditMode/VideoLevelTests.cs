@@ -28,7 +28,10 @@ public class VideoLevelTests
                        ""distance"":50,""window"":0.5,""windowDistance"":5} ],
         ""screenSpeed"": [ {""d"":0,""v"":0.4}, {""d"":50,""v"":0.6}, {""d"":100,""v"":0.5} ],
         ""hidden"": [ {""startDistance"":70,""endDistance"":80,
-                       ""startTime"":7,""endTime"":8} ]
+                       ""startTime"":7,""endTime"":8} ],
+        ""ambient"": [ {""d"":0,""r"":1,""g"":1,""b"":1},
+                       {""d"":50,""r"":0.5,""g"":0.5,""b"":0.6},
+                       {""d"":100,""r"":1.4,""g"":1.3,""b"":1.1} ]
     }";
 
     static VideoLevel Sample() => VideoLevel.Parse(SampleJson);
@@ -132,6 +135,33 @@ public class VideoLevelTests
             VideoLevel.Parse(SampleJson.Replace("\"characterColumn\": 0.35",
                 "\"characterColumn\": 0.35, \"travelDirection\": 1")).TravelDirection,
             Is.EqualTo(1));
+    }
+
+    [Test]
+    public void AmbientIsInterpolatedAlongTheLevel()
+    {
+        VideoLevel level = Sample();
+
+        Assert.That(level.AmbientAtDistance(0f).r, Is.EqualTo(1f).Within(1e-3f));
+        Assert.That(level.AmbientAtDistance(25f).r, Is.EqualTo(0.75f).Within(1e-3f));
+        // Shade keeps its cool cast, glare its warm one.
+        Assert.That(level.AmbientAtDistance(50f).b, Is.GreaterThan(level.AmbientAtDistance(50f).r));
+        Assert.That(level.AmbientAtDistance(100f).r, Is.GreaterThan(level.AmbientAtDistance(100f).b));
+    }
+
+    [Test]
+    public void AmbientDefaultsToWhiteWhenTheLevelHasNone()
+    {
+        VideoLevel level = VideoLevel.Parse(SampleJson.Replace("ambient", "unusedAmbient"));
+
+        Assert.That(level.AmbientAtDistance(25f), Is.EqualTo(Color.white));
+    }
+
+    [Test]
+    public void DepthRangeFallsBackWhenThePathIsTooShortToMeasure()
+    {
+        // The 3-point sample cannot yield percentiles worth trusting.
+        Assert.That(Sample().PathDepthRange, Is.EqualTo(new Vector2(0.45f, 0.95f)));
     }
 
     [Test]

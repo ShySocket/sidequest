@@ -14,15 +14,15 @@ public sealed class RunnerConfiguration : ScriptableObject
     [SerializeField, Min(0f)] private float decelerationSmoothingTime = 0.35f;
 
     [Header("GPS Validation")]
-    [SerializeField, Min(0f)] private float desiredGpsAccuracyMeters = 20f;
-    [SerializeField, Min(0f)] private float gpsUpdateDistanceMeters = 1f;
+    [SerializeField, Min(0f)] private float desiredGpsAccuracyMeters = 10f;
+    [SerializeField, Min(0f)] private float gpsUpdateDistanceMeters = 0.1f;
     [SerializeField, Min(0.1f)] private float gpsInitializationTimeoutSeconds = 45f;
     [SerializeField, Min(0.05f)] private float gpsPollingIntervalSeconds = 0.25f;
     [SerializeField, Min(0f)] private float maximumAcceptedHorizontalAccuracyMeters = 75f;
     [SerializeField, Min(0f)] private float maximumAcceptedPhysicalSpeedMetersPerSecond = 80f;
     [SerializeField, Min(0.1f)] private float gpsStaleTimeoutSeconds = 15f;
     [SerializeField, Min(0f)] private float stopThresholdMetersPerSecond = 0.75f;
-    [SerializeField, Min(1)] private int requiredConsecutiveLowSpeedReadings = 3;
+    [SerializeField, Min(1)] private int requiredConsecutiveLowSpeedReadings = 1;
 
     [Header("Movement Estimation")]
     [SerializeField, Min(0.1f)] private float estimatorGpsStaleThresholdSeconds = 1.5f;

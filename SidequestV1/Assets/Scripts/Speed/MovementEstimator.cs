@@ -42,6 +42,11 @@ public sealed class MovementEstimator
     private const float QuietAfterBrakingSeconds = 0.35f;
     private const float BrakingResetSeconds = 1.5f;
 
+    // The windowed GPS speed straddles a stop, so it keeps reporting residual
+    // motion for several seconds after braking ends. During that window only
+    // accelerometer evidence may restart the character.
+    private const float GpsRestartSuppressionSeconds = 5f;
+
     private const float MinimumCourseUpdateSpeedMps = 2.5f;
     private const float MaximumCourseUpdateDegrees = 100f;
     private const float MaximumCourseAccuracyFraction = 0.6f;
@@ -73,6 +78,7 @@ public sealed class MovementEstimator
     private float lastReliableMovingCourseDegrees = float.NaN;
     private bool isStationary;
     private double stopHoldUntil = -1d;
+    private double gpsRestartSuppressedUntil = -1d;
 
     private bool returnBlendActive;
     private double returnBlendStartedAt;
@@ -175,27 +181,40 @@ public sealed class MovementEstimator
         }
         else if (isStationary)
         {
-            bool courseIsConsistent = float.IsNaN(courseDegrees)
-                || float.IsNaN(candidateMovingCourseDegrees)
-                || Mathf.Abs(Mathf.DeltaAngle(
-                    candidateMovingCourseDegrees,
-                    courseDegrees)) <= MaximumStartCourseChangeDegrees;
-            consecutiveMovingGpsSamples = courseIsConsistent
-                ? consecutiveMovingGpsSamples + 1
-                : 1;
-            candidateMovingCourseDegrees = courseDegrees;
             bool motionConfirmsStart =
                 startMotionEvidenceDuration
                     >= GpsConfirmedStartEvidenceSeconds;
-            if (motionConfirmsStart
-                || consecutiveMovingGpsSamples >= MovingGpsSamplesRequired)
+            if (!motionConfirmsStart
+                && localTimestamp < gpsRestartSuppressedUntil)
             {
-                isStationary = false;
+                // Residual window speed from before the stop is not evidence
+                // of a departure; a real one shows up on the accelerometer.
+                consecutiveMovingGpsSamples = 0;
+                candidateMovingCourseDegrees = float.NaN;
+                acceptedSpeed = 0f;
             }
             else
             {
-                // An isolated displacement is commonly GPS jitter at a station.
-                acceptedSpeed = 0f;
+                bool courseIsConsistent = float.IsNaN(courseDegrees)
+                    || float.IsNaN(candidateMovingCourseDegrees)
+                    || Mathf.Abs(Mathf.DeltaAngle(
+                        candidateMovingCourseDegrees,
+                        courseDegrees)) <= MaximumStartCourseChangeDegrees;
+                consecutiveMovingGpsSamples = courseIsConsistent
+                    ? consecutiveMovingGpsSamples + 1
+                    : 1;
+                candidateMovingCourseDegrees = courseDegrees;
+                if (motionConfirmsStart
+                    || consecutiveMovingGpsSamples >= MovingGpsSamplesRequired)
+                {
+                    isStationary = false;
+                }
+                else
+                {
+                    // An isolated displacement is commonly GPS jitter at a
+                    // station.
+                    acceptedSpeed = 0f;
+                }
             }
         }
         else
@@ -436,6 +455,7 @@ public sealed class MovementEstimator
         lastReliableMovingCourseDegrees = float.NaN;
         isStationary = true;
         stopHoldUntil = -1d;
+        gpsRestartSuppressedUntil = -1d;
         returnBlendActive = false;
         EstimatedVehicleSpeedMps = 0f;
         ForwardAccelerationMps2 = 0f;
@@ -729,6 +749,9 @@ public sealed class MovementEstimator
             stopHoldUntil = Math.Max(
                 stopHoldUntil,
                 timestamp + settings.StopHoldSeconds);
+            gpsRestartSuppressedUntil = Math.Max(
+                gpsRestartSuppressedUntil,
+                timestamp + GpsRestartSuppressionSeconds);
         }
 
         ResetBrakingEvidence();

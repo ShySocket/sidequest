@@ -435,7 +435,10 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
         // Nearer ground sits lower in frame, so the ball grows as the run line
         // descends. Without this it appears to swim as the road nears and recedes.
-        float depth = Mathf.InverseLerp(depthRange.x, depthRange.y, groundY);
+        // The range comes from this level's own path percentiles, so the size
+        // sweep matches how much depth the clip's path actually covers.
+        Vector2 range = director.Level.PathDepthRange;
+        float depth = Mathf.InverseLerp(range.x, range.y, groundY);
         // The level records the diameter the movement was drawn at; prefer it
         // over the serialized field, which a scene saved earlier would pin.
         float authored = director.Level.MarkerDiameter;
@@ -460,7 +463,8 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                     JumpHeight = Mathf.Max(activeJumpHeight, jumpHeight) * frameHeight,
                     Heading = heading,
                     Hidden = stance == Stance.Hidden,
-                    Surface = director.Level.SurfaceAtDistance(distance)
+                    Surface = director.Level.SurfaceAtDistance(distance),
+                    Ambient = director.Level.AmbientAtDistance(distance)
                 },
                 Time.deltaTime);
         }

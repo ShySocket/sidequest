@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 from tqdm import tqdm
 
+from .ambient import sample_ambient
 from .authored import MarkerTrack, Timeline, build_authored_level, write_authored
 from .decode import VideoInfo, iter_frames, probe
 from .detect import ObstacleDetector, load_detections, save_detections
@@ -397,6 +398,28 @@ def _command_author(args: argparse.Namespace) -> int:
         analysis_width=args.analysis_width,
         playback_file=args.playback_file,
     )
+
+    # Light the ball from the footage: sample the pixels around where the
+    # character will be, per frame, and ship them with the level.
+    path_d = np.array([p["d"] for p in level["path"]])
+    path_t = np.array([distance_map.time_at(float(d)) for d in path_d])
+    path_x = np.array([p["x"] for p in level["path"]])
+    path_y = np.array([p["y"] for p in level["path"]])
+    total = info.frame_count // 3 if info.frame_count > 0 else None
+    with tqdm(total=total, unit="frame", desc="ambient light") as progress:
+        colors = sample_ambient(info, path_t, path_x, path_y, progress=progress)
+    level["ambient"] = [
+        {
+            "d": round(float(d), 3),
+            "r": round(float(c[0]), 3),
+            "g": round(float(c[1]), 3),
+            "b": round(float(c[2]), 3),
+        }
+        for d, c in zip(path_d, colors)
+    ]
+    luma = colors @ np.array([0.299, 0.587, 0.114])
+    print(f"ambient luma         median {np.median(luma):.2f}  "
+          f"range {luma.min():.2f}-{luma.max():.2f}")
 
     counts: dict[str, int] = {}
     for event in level["events"]:

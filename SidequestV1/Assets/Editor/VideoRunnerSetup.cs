@@ -37,6 +37,7 @@ public static class VideoRunnerSetup
         Camera camera = CreateCamera();
         VideoBackground background = CreateBackground(camera);
         LevelDirector director = CreateDirector(background);
+        WireVehicleSpeed(director);
         VideoRunnerCharacter character = CreateCharacter(director, background);
         CreateHud(director, character);
         CreateSunLight();
@@ -167,6 +168,35 @@ public static class VideoRunnerSetup
         SetPrivateField(character, "background", background);
         SetPrivateField(character, "view", view);
         return character;
+    }
+
+    /// <summary>
+    /// The GPS/mock speed stack, wired the way RunnerPrototype wires it.
+    /// </summary>
+    /// <remarks>
+    /// LevelDirector can build this at runtime for stale scenes, but a scene
+    /// built here should carry the real configuration asset with its tuned
+    /// values, not runtime defaults.
+    /// </remarks>
+    static void WireVehicleSpeed(LevelDirector director)
+    {
+        var configuration = AssetDatabase.LoadAssetAtPath<RunnerConfiguration>(
+            "Assets/ScriptableObjects/Configurations/DefaultRunnerConfiguration.asset");
+
+        var holder = new GameObject("VehicleSpeed");
+        var mock = holder.AddComponent<MockSpeedProvider>();
+        var permission = holder.AddComponent<LocationPermissionService>();
+        var gps = holder.AddComponent<UnityGpsSpeedProvider>();
+        var motion = holder.AddComponent<UnityDeviceMotionProvider>();
+        var controller = holder.AddComponent<VehicleSpeedController>();
+
+        SetPrivateField(gps, "configuration", configuration);
+        SetPrivateField(gps, "permissionService", permission);
+        SetPrivateField(controller, "configuration", configuration);
+        SetPrivateField(controller, "mockSpeedProvider", mock);
+        SetPrivateField(controller, "unityGpsSpeedProvider", gps);
+        SetPrivateField(controller, "deviceMotionProvider", motion);
+        SetPrivateField(director, "vehicleSpeedController", controller);
     }
 
     /// <summary>

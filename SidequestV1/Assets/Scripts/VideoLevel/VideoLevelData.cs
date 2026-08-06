@@ -42,6 +42,7 @@ public class VideoLevelData
     public List<VideoLevelSpeedPoint> screenSpeed = new List<VideoLevelSpeedPoint>();
     public List<VideoLevelEvent> events = new List<VideoLevelEvent>();
     public List<VideoLevelHiddenSpan> hidden = new List<VideoLevelHiddenSpan>();
+    public List<VideoLevelAmbientPoint> ambient = new List<VideoLevelAmbientPoint>();
 }
 
 [Serializable]
@@ -86,6 +87,21 @@ public class VideoLevelSpeedPoint
 {
     public float d;
     public float v;
+}
+
+/// <summary>Light sampled from the footage where the character stands.</summary>
+/// <remarks>
+/// Normalized so the clip's median luminance is 1.0: the game multiplies its
+/// tuned material colours by this, so ordinary daylight leaves them unchanged
+/// and shade or glare move them relative to that.
+/// </remarks>
+[Serializable]
+public class VideoLevelAmbientPoint
+{
+    public float d;
+    public float r;
+    public float g;
+    public float b;
 }
 
 [Serializable]

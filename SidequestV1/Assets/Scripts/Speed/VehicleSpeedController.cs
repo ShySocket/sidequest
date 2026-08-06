@@ -152,7 +152,9 @@ public sealed class VehicleSpeedController : MonoBehaviour
             Time.realtimeSinceStartupAsDouble);
         DelayedPhysicalSpeed = LastKnownPhysicalSpeed;
 
-        if (movementEstimator.SuddenStopDetected)
+        // A confirmed stop zeroes the game speed on the same frame instead of
+        // letting the smoothing filter bleed the last speed out over time.
+        if (movementEstimator.SuddenStopDetected || movementEstimator.IsStationary)
         {
             speedFilter.Reset();
             FilteredPhysicalSpeed = 0f;

@@ -178,6 +178,14 @@ and there is no geometry here: the ground is pixels on a perspective plane that 
 flat receiver in the scene matches, so a shadow map would land in the wrong place
 or on nothing. A blob can be placed exactly where the level says the ground is.
 
+**The lighting comes from the footage, not a scene light.** The analyzer samples
+the pixels around where the ball will be, per frame, normalized so the clip's
+median daylight is white. The game multiplies its tuned material colours by that
+sample: driving through tree shade dims and cools the ball, a sunlit wall warms
+it, and the contact shadow fades in shade the way real shadows lose their edge.
+The size sweep likewise comes from the level's own path — its 5th/95th
+percentile ground heights set the far/near scale range, so it adapts per clip.
+
 Four cues do the work of making it look present, in rough order of importance:
 
 | Cue | Why |
@@ -206,12 +214,17 @@ exact instant — with a short input buffer so a slightly early tap still lands.
 
 `LevelDirector.playbackMode`:
 
-- **NativeRate** (default) — advances at the clip's own pace, scaled by the
-  speed multiplier. What you want at a desk.
-- **VehicleSpeed** — advances from `VehicleSpeedController.GameSpeed`, i.e. real
-  GPS and accelerometer motion. Wire the controller into the director's
-  `vehicleSpeedController` field and set `referenceGameSpeed` to the game speed
-  that should equal the clip's own pace.
+- **Auto** (default) — NativeRate at a desk, VehicleSpeed on a phone, mirroring
+  VehicleSpeedController's own Auto (Mock in the editor, GPS on device). The
+  whole chain follows the hardware it runs on, so a build taken into a vehicle
+  moves with the vehicle without any settings changed.
+- **NativeRate** — advances at the clip's own pace, scaled by the speed
+  multiplier.
+- **VehicleSpeed** — advances from `VehicleSpeedController.GameSpeed`. If the
+  scene never wired a controller, the director builds the whole stack at runtime
+  (providers, permission service, configuration defaults), so stale scenes work
+  on device too. `referenceGameSpeed` sets which game speed equals the clip's
+  own pace.
 
 The video is driven by `playbackSpeed` rather than by seeking each frame:
 seeking 1080p HEVC every frame stutters, while a scaled rate is smooth. A

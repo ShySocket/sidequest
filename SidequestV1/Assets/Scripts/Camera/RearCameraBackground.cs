@@ -18,6 +18,9 @@ public sealed class RearCameraBackground : MonoBehaviour
     private const float BackgroundDistance = 50f;
     private const float DeviceDiscoveryTimeoutSeconds = 5f;
     private const float FirstFrameTimeoutSeconds = 8f;
+    private const int RequestedCameraWidth = 1280;
+    private const int RequestedCameraHeight = 720;
+    private const int RequestedCameraFramesPerSecond = 30;
 
     private Camera targetCamera;
     private GameObject backgroundQuad;
@@ -109,11 +112,22 @@ public sealed class RearCameraBackground : MonoBehaviour
     {
         if (scene.name != RunnerSceneName)
         {
+            if (cameraStartup != null)
+            {
+                StopCoroutine(cameraStartup);
+                cameraStartup = null;
+            }
+
+            cameraRequested = false;
             StopCameraFeed(true);
+            SetToggleAppearance("Camera: Off", Color.black);
             gameObject.SetActive(false);
             return;
         }
 
+        // The service survives scene loads, so it may be inactive here after
+        // a visit to another scene; coroutines only run on active objects.
+        gameObject.SetActive(true);
         StartCoroutine(BindToMainCameraNextFrame());
     }
 
@@ -156,11 +170,18 @@ public sealed class RearCameraBackground : MonoBehaviour
         backgroundRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
         backgroundRenderer.receiveShadows = false;
         backgroundRenderer.sortingOrder = short.MinValue;
-        backgroundRenderer.sharedMaterial = GetOrCreateBackgroundMaterial();
-        backgroundRenderer.enabled = backgroundRenderer.sharedMaterial != null
+        Material material = GetOrCreateBackgroundMaterial();
+        backgroundRenderer.sharedMaterial = material;
+        bool feedIsLive = material != null
             && cameraRequested
             && cameraTexture != null
             && cameraTexture.isPlaying;
+        if (feedIsLive)
+        {
+            ApplyCameraTexture(material);
+        }
+
+        backgroundRenderer.enabled = feedIsLive;
         RefreshBackgroundLayout();
     }
 
@@ -364,7 +385,14 @@ public sealed class RearCameraBackground : MonoBehaviour
             }
 
             ReleaseCameraTexture();
-            cameraTexture = new WebCamTexture(devices[i].name);
+            // Ask for a concrete resolution; several Android devices fall
+            // back to a tiny default frame when none is requested. The device
+            // still substitutes its closest supported mode.
+            cameraTexture = new WebCamTexture(
+                devices[i].name,
+                RequestedCameraWidth,
+                RequestedCameraHeight,
+                RequestedCameraFramesPerSecond);
 
             try
             {

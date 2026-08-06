@@ -47,6 +47,9 @@ public sealed class VideoRunnerBallView : MonoBehaviour
 
         /// <summary>Surface being run on, which changes how the ball reads.</summary>
         public string Surface;
+
+        /// <summary>Light sampled from the footage here; white in ordinary daylight.</summary>
+        public Color Ambient;
     }
 
     [SerializeField] Transform ball;
@@ -88,6 +91,11 @@ public sealed class VideoRunnerBallView : MonoBehaviour
     [Tooltip("Shadow width multiplier on a rail: a narrow surface, so a tight contact.")]
     [SerializeField] float railShadowNarrowing = 0.45f;
 
+    [Tooltip("Landing squash multiplier by surface: hedges give, rails do not.")]
+    [SerializeField] float hedgeLandingSoftness = 1.4f;
+    [SerializeField] float grassLandingSoftness = 1.2f;
+    [SerializeField] float railLandingSoftness = 0.7f;
+
     float rollAngle;
     float squash;
     bool wasAirborne;
@@ -97,6 +105,18 @@ public sealed class VideoRunnerBallView : MonoBehaviour
     // frame is pure garbage for the collector to chase.
     MaterialPropertyBlock shadowProperties;
     static readonly int OpacityId = Shader.PropertyToID("_Opacity");
+    static readonly int LightColorId = Shader.PropertyToID("_LightColor");
+    static readonly int SkyColorId = Shader.PropertyToID("_SkyColor");
+    static readonly int GroundColorId = Shader.PropertyToID("_GroundColor");
+    static readonly int SpecStrengthId = Shader.PropertyToID("_SpecStrength");
+
+    Color appliedAmbient = Color.clear;
+    float appliedLuma = -1f;
+    Color baseLight;
+    Color baseSky;
+    Color baseGround;
+    float baseSpecStrength;
+    float shadowLightScale = 1f;
 
     public void Apply(in Pose pose, float deltaTime)
     {
@@ -119,7 +139,16 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         // long fall and a short hop both land with the same punch.
         if (wasAirborne && !airborne)
         {
-            squash = landingSquash;
+            // A hedge absorbs the landing, a steel rail does not; the squash is
+            // most of how that difference reads.
+            float softness = pose.Surface switch
+            {
+                "hedge" => hedgeLandingSoftness,
+                "grass" => grassLandingSoftness,
+                "rail" => railLandingSoftness,
+                _ => 1f,
+            };
+            squash = landingSquash * softness;
         }
 
         wasAirborne = airborne;
@@ -127,6 +156,57 @@ public sealed class VideoRunnerBallView : MonoBehaviour
 
         UpdateBall(pose, radius, deltaTime);
         UpdateShadow(pose);
+        UpdateLighting(pose);
+    }
+
+    /// <summary>
+    /// Tint the ball's lighting from the footage around it.
+    /// </summary>
+    /// <remarks>
+    /// One constant sun looks pasted on the moment the clip drives through tree
+    /// shade or past a sunlit wall. The level carries light sampled from the
+    /// pixels where the ball stands, normalized so ordinary daylight is white;
+    /// the tuned material colours are multiplied by it, and the contact shadow
+    /// fades in shade, where real shadows lose their edge.
+    /// </remarks>
+    void UpdateLighting(in Pose pose)
+    {
+        if (ballRenderer == null)
+        {
+            return;
+        }
+
+        Color ambient = pose.Ambient.a > 0f ? pose.Ambient : Color.white;
+        float luma = ambient.r * 0.299f + ambient.g * 0.587f + ambient.b * 0.114f;
+        if (Mathf.Abs(luma - appliedLuma) < 0.02f
+            && Mathf.Abs(ambient.r - appliedAmbient.r) < 0.02f
+            && Mathf.Abs(ambient.b - appliedAmbient.b) < 0.02f)
+        {
+            return;
+        }
+
+        appliedAmbient = ambient;
+        appliedLuma = luma;
+
+        // .material: EnsureBuilt already makes a per-instance material, and a
+        // scene-supplied shared one must not be edited in place.
+        Material material = ballRenderer.material;
+        if (baseLight.a == 0f)
+        {
+            baseLight = material.GetColor(LightColorId);
+            baseSky = material.GetColor(SkyColorId);
+            baseGround = material.GetColor(GroundColorId);
+            baseSpecStrength = material.GetFloat(SpecStrengthId);
+        }
+
+        material.SetColor(LightColorId, baseLight * ambient);
+        material.SetColor(SkyColorId, baseSky * ambient);
+        material.SetColor(GroundColorId, baseGround * ambient);
+        // Glints dull in shade along with everything else.
+        material.SetFloat(SpecStrengthId, baseSpecStrength * Mathf.Clamp(luma, 0.5f, 1.3f));
+
+        // Direct sun casts a hard dark blob; shade barely casts one at all.
+        shadowLightScale = Mathf.Clamp(Mathf.Pow(luma, 0.8f), 0.45f, 1.25f);
     }
 
     /// <summary>
@@ -231,7 +311,8 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         float narrowing = pose.Surface == "rail" ? railShadowNarrowing : 1f;
         float scale =
             Mathf.Lerp(shadowContactScale, shadowApexScale, altitude) * pose.Diameter * narrowing;
-        float opacity = Mathf.Lerp(shadowContactOpacity, shadowApexOpacity, altitude);
+        float opacity =
+            Mathf.Lerp(shadowContactOpacity, shadowApexOpacity, altitude) * shadowLightScale;
 
         // The shadow slides away from the ball as it rises, along the light.
         Vector3 offset = new Vector3(
