@@ -1,0 +1,572 @@
+"""Frame-by-frame audit of the character's motion against the footage.
+
+The level can pass every unit test and still look wrong on screen, because the
+tests check the file and the eye checks the frame. This audit closes that gap:
+it steps through the level at video rate simulating the character exactly as the
+game moves it - ideal taps included - and checks each frame against evidence
+from the footage itself.
+
+Three claims are checked, one per complaint they guard against:
+
+* **Support.** A grounded ball must rest on something visible: the extracted
+  rail or hedge ledge where the level names one, or the segmented ground line
+  otherwise. A ball floating above all evidence is the "moving in mid air" look.
+* **Clearance.** A jump taken anywhere inside its cue window - not only at the
+  perfect instant - must keep the ball off the ground and carrying real height
+  for as long as the obstacle crosses its column. Strict box-disjointness is
+  deliberately not the criterion: a parked SUV's box towers over any jump, and
+  even the designer's own drawn arc passes inside it - the vault reads from the
+  ball being airborne and high, in front of the obstacle.
+* **Dodge.** During a dodge cue, the shifted ball must clear the sign's box.
+
+Each check reports margins, not just pass/fail, so a fix can be sized instead
+of guessed at.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import json
+import numpy as np
+
+from .segment import NO_GROUND, load_surfaces
+
+FPS = 30.0
+
+SUPPORT_TOLERANCE = 0.05
+"""Ball-bottom to evidence-line distance, in frame heights, that reads as rested."""
+
+SUPPORT_MIN_SPAN = 0.30
+"""Seconds a support violation must persist to count; single frames are noise."""
+
+DEFAULT_JUMP_HEIGHT = 0.22
+DEFAULT_AIR_TIME = 1.0
+HEIGHT_CLAMP = (0.12, 0.50)
+"""Mirrors VideoRunnerCharacter's jump tuning; the audit must move like the game."""
+
+DODGE_DEPTH_STEP = 0.09
+"""How far the dodge steps toward the camera, in frame heights."""
+
+DODGE_DURATION = 0.55
+
+COLUMN_WINDOW_PX = 30
+"""Half-window of columns around the ball used when reading evidence lines."""
+
+
+@dataclass
+class Violation:
+    check: str
+    start: float
+    end: float
+    worst: float
+    detail: str
+
+    def __str__(self) -> str:
+        return (
+            f"[{self.check}] {self.start:6.2f}-{self.end:6.2f}s  "
+            f"worst {self.worst:+.3f}  {self.detail}"
+        )
+
+
+@dataclass
+class AuditResult:
+    violations: list[Violation] = field(default_factory=list)
+    frames: int = 0
+    supported_frames: int = 0
+
+    @property
+    def clean(self) -> bool:
+        return not self.violations
+
+
+class LevelAuditor:
+    def __init__(
+        self,
+        level_path: Path,
+        surfaces_path: Path,
+        ledges_path: Path,
+        detections_path: Path,
+    ) -> None:
+        self.level = json.loads(level_path.read_text())
+
+        self.map_t = np.array([p["t"] for p in self.level["timeToDistance"]])
+        self.map_d = np.array([p["d"] for p in self.level["timeToDistance"]])
+        self.path_d = np.array([p["d"] for p in self.level["path"]])
+        self.path_y = np.array([p["y"] for p in self.level["path"]])
+        self.path_x = np.array([p["x"] for p in self.level["path"]])
+        self.path_s = [p["s"] for p in self.level["path"]]
+
+        surfaces = load_surfaces(surfaces_path)
+        self.surface_times = np.array([s.time for s in surfaces])
+        self.surfaces = surfaces
+
+        from .ledges import load_ledges
+
+        self.ledge_times, self.ledge_lines, self.ledge_w, self.ledge_h = load_ledges(
+            ledges_path
+        )
+
+        detections = json.loads(detections_path.read_text())
+        self.det_w = detections["width"]
+        self.det_h = detections["height"]
+        self.det_times = np.array([f["time"] for f in detections["frames"]])
+        self.det_frames = detections["frames"]
+
+        heights = np.sort(self.path_y)
+        self.depth_far = float(heights[int(len(heights) * 0.05)])
+        self.depth_near = float(heights[int(len(heights) * 0.95)])
+        self.marker_diameter = float(self.level.get("markerDiameter", 0.173)) or 0.173
+
+    # --- the game's own motion, mirrored -----------------------------------
+
+    def distance_at(self, time: float) -> float:
+        return float(np.interp(time, self.map_t, self.map_d))
+
+    def ground_at(self, distance: float) -> float:
+        return float(np.interp(distance, self.path_d, self.path_y))
+
+    def column_at(self, distance: float) -> float:
+        return float(np.interp(distance, self.path_d, self.path_x))
+
+    def surface_at(self, distance: float) -> str:
+        index = int(np.searchsorted(self.path_d, distance, side="right")) - 1
+        return self.path_s[int(np.clip(index, 0, len(self.path_s) - 1))]
+
+    def diameter_at(self, distance: float) -> float:
+        ground = self.ground_at(distance)
+        span = self.depth_near - self.depth_far
+        depth = 0.0 if span <= 0 else np.clip((ground - self.depth_far) / span, 0, 1)
+        return self.marker_diameter * float(np.interp(depth, [0, 1], [0.82, 1.2]))
+
+    def arc(self, height: float, air_time: float = 0.0) -> tuple[float, float]:
+        """(clamped height, duration) exactly as VideoRunnerCharacter computes.
+
+        Events carrying the marker's own measured air time use it; the sqrt rule
+        is the fallback for hand-typed cues.
+        """
+        clamped = float(np.clip(height if height > 0 else DEFAULT_JUMP_HEIGHT, *HEIGHT_CLAMP))
+        if air_time > 0:
+            return clamped, float(np.clip(air_time, 0.6, 3.4))
+        duration = DEFAULT_AIR_TIME * np.sqrt(clamped / DEFAULT_JUMP_HEIGHT)
+        return clamped, float(duration)
+
+    def air_height(self, height: float, duration: float, since_takeoff: float) -> float:
+        if since_takeoff < 0 or since_takeoff > duration:
+            return 0.0
+        phase = since_takeoff / duration
+        return height * 4.0 * phase * (1.0 - phase)
+
+    # --- evidence from the footage -----------------------------------------
+
+    def evidence_lines(self, time: float, column: float) -> dict[str, float]:
+        """Every surface line visible near the ball's column, by name."""
+        lines: dict[str, float] = {}
+
+        # Median over a small time window: one segmentation frame is too noisy
+        # to accuse the character of floating.
+        edges = []
+        for frame in np.flatnonzero(np.abs(self.surface_times - time) <= 0.25):
+            surface = self.surfaces[frame]
+            if not surface.is_plausible_ground:
+                continue
+            pixel = int(np.clip(column * surface.width, 0, surface.width - 1))
+            window = surface.run_line[
+                max(0, pixel - COLUMN_WINDOW_PX) : pixel + COLUMN_WINDOW_PX + 1
+            ]
+            window = window[window != NO_GROUND]
+            if window.size:
+                edges.append(float(np.median(window)) / surface.height)
+        if len(edges) >= 2 and max(edges) - min(edges) <= 0.15:
+            # Consistency first: a wall passage flaps the edge between open
+            # ground and a bottom sliver, and the median of a bimodal sample
+            # describes nothing that exists. Then thinness: a region squeezed
+            # into the frame's bottom sliver is too thin to judge against.
+            edge = float(np.median(edges))
+            if edge <= 0.88:
+                lines["ground"] = edge
+
+        frame = int(np.argmin(np.abs(self.ledge_times - time)))
+        if abs(self.ledge_times[frame] - time) < 0.5:
+            pixel = int(np.clip(column * self.ledge_w, 0, self.ledge_w - 1))
+            for name, stack in self.ledge_lines.items():
+                window = stack[
+                    frame, max(0, pixel - COLUMN_WINDOW_PX) : pixel + COLUMN_WINDOW_PX + 1
+                ]
+                window = window[window != NO_GROUND]
+                if window.size:
+                    value = float(np.median(window)) / self.ledge_h
+                    # A ledge at the frame's very top or bottom is a broken
+                    # segmentation frame, not a surface.
+                    if 0.08 < value < 0.97:
+                        lines[name] = value
+
+        return lines
+
+    def obstacle_boxes(self, time: float, classes: set[str] | None = None) -> list[dict]:
+        """Detection boxes near ``time``, normalized to 0..1."""
+        index = int(np.argmin(np.abs(self.det_times - time)))
+        if abs(self.det_times[index] - time) > 0.25:
+            return []
+
+        skip = {"sidewalk", "railing", "fence", "tree", "bush"}
+        boxes = []
+        for det in self.det_frames[index]["detections"]:
+            if det["label"] in skip:
+                continue
+            if classes is not None and det["label"] not in classes:
+                continue
+            x1, y1, x2, y2 = det["box"]
+            boxes.append(
+                {
+                    "label": det["label"],
+                    "score": det["score"],
+                    "x1": x1 / self.det_w,
+                    "y1": y1 / self.det_h,
+                    "x2": x2 / self.det_w,
+                    "y2": y2 / self.det_h,
+                }
+            )
+        return boxes
+
+    @staticmethod
+    def circle_box_gap(cx: float, cy: float, r: float, box: dict) -> float:
+        """Signed gap between a ball and a box; negative means touching."""
+        nx = np.clip(cx, box["x1"], box["x2"])
+        ny = np.clip(cy, box["y1"], box["y2"])
+        return float(np.hypot(cx - nx, cy - ny) - r)
+
+    # --- checks -------------------------------------------------------------
+
+    @staticmethod
+    def support_gap(ground: float, lines: dict[str, float]) -> float:
+        """How far the ball floats above its best evidence.
+
+        The segmented ground line is the *far edge* of a region, so any ball at
+        or below it stands inside the region and is supported; only being above
+        it is floating. A ledge is a line, and support means being near it in
+        either direction.
+        """
+        best = np.inf
+        for name, value in lines.items():
+            if name == "ground":
+                gap = value - ground  # positive only when ABOVE the far edge
+            else:
+                gap = abs(ground - value)
+            best = min(best, gap)
+        return float(max(best, 0.0))
+
+    def obscured_by_obstacle(self, time: float, column: float, ground: float) -> bool:
+        """True when an obstacle box hides the surface under the ball.
+
+        A van filling the column pushes the visible ground to the frame bottom;
+        the ball is not floating, its footing is just hidden behind the van.
+        """
+        for box in self.obstacle_boxes(time):
+            if box["x1"] <= column <= box["x2"] and box["y2"] >= ground - 0.15:
+                return True
+        return False
+
+    def check_support(self) -> list[Violation]:
+        """A grounded ball must rest on visible evidence.
+
+        Which evidence binds depends on the named surface: on a ledge surface
+        the ball must sit on that ledge; on a ground surface it must sit inside
+        the ground region, and a background hedge's top line has no say - at the
+        grass bank the only measurable line is the bushes behind the ball, and
+        letting them accuse it of floating was a false alarm, not an audit.
+        """
+        jump_spans = []
+        for event in self.level["events"]:
+            if event["type"] == "dodge":
+                # Mid-dodge the ball is deliberately between lanes; the resting
+                # path is not where it stands.
+                jump_spans.append(
+                    (event["time"] - DODGE_DURATION, event["time"] + DODGE_DURATION)
+                )
+                continue
+            if event["type"] not in ("jump", "platform"):
+                continue
+            height, duration = self.arc(event.get("height", 0.0), event.get("airTime", 0.0))
+            jump_spans.append((event["time"] - duration * 0.7, event["time"] + duration * 0.7))
+
+        hidden = [(h["startTime"], h["endTime"]) for h in self.level.get("hidden", [])]
+
+        # A surface handover is a slide (the hedge slide-off is authored as
+        # one), so frames near a name change are transition, not floating.
+        transitions = []
+        for i in range(1, len(self.path_s)):
+            if self.path_s[i] != self.path_s[i - 1]:
+                t = float(np.interp(self.path_d[i], self.map_d, self.map_t))
+                transitions.append((t - 0.7, t + 0.7))
+
+        duration_total = float(self.map_t[-1])
+        gaps: list[tuple[float, float]] = []
+        open_start = None
+        worst = 0.0
+        worst_detail = ""
+        violations: list[Violation] = []
+        supported = 0
+        frames = 0
+
+        for time in np.arange(0.0, duration_total, 1.0 / FPS):
+            if (
+                any(a <= time <= b for a, b in jump_spans)
+                or any(a <= time <= b for a, b in hidden)
+                or any(a <= time <= b for a, b in transitions)
+            ):
+                # A violation must not bridge an excluded region.
+                if open_start is not None and time - open_start >= SUPPORT_MIN_SPAN:
+                    violations.append(
+                        Violation("support", open_start, time, worst, worst_detail)
+                    )
+                open_start = None
+                worst = 0.0
+                continue
+
+            distance = self.distance_at(time)
+            ground = self.ground_at(distance)
+            column = self.column_at(distance)
+            frames += 1
+
+            if self.obscured_by_obstacle(time, column, ground):
+                supported += 1  # the surface is hidden behind the obstacle
+                continue
+
+            surface_name = self.surface_at(distance)
+            lines = self.evidence_lines(time, column)
+            if surface_name in ("rail", "hedge"):
+                lines = {k: v for k, v in lines.items() if k == surface_name}
+            else:
+                lines.pop("rail", None)
+                lines.pop("hedge", None)
+            if not lines:
+                supported += 1  # nothing measurable; cannot call it floating
+                continue
+
+            gap = self.support_gap(ground, lines)
+            if gap <= SUPPORT_TOLERANCE:
+                supported += 1
+                if open_start is not None:
+                    if time - open_start >= SUPPORT_MIN_SPAN:
+                        violations.append(
+                            Violation("support", open_start, time, worst, worst_detail)
+                        )
+                    open_start = None
+                    worst = 0.0
+                continue
+
+            if open_start is None:
+                open_start = time
+            if gap > worst:
+                worst = gap
+                nearest = min(lines, key=lambda k: abs(ground - lines[k]))
+                worst_detail = (
+                    f"ball at y={ground:.3f}, nearest evidence '{nearest}' "
+                    f"at y={lines[nearest]:.3f} ({self.surface_at(distance)})"
+                )
+
+        if open_start is not None and duration_total - open_start >= SUPPORT_MIN_SPAN:
+            violations.append(
+                Violation("support", open_start, duration_total, worst, worst_detail)
+            )
+
+        self._support_stats = (frames, supported)
+        return violations
+
+    def check_clearance(self) -> list[Violation]:
+        """Any tap inside the window must clear the obstacle untouched."""
+        violations = []
+        for event in self.level["events"]:
+            if event["type"] != "jump":
+                continue
+
+            height, duration = self.arc(event.get("height", 0.0), event.get("airTime", 0.0))
+            window_d = event.get("windowDistance", 0.0)
+            window_t = float(
+                np.interp(event["distance"] + window_d, self.map_d, self.map_t)
+                - event["time"]
+            )
+
+            worst_gap = np.inf
+            worst_detail = ""
+            # Tap = takeoff, exactly as the game fires it. Any tap that keeps
+            # the ball airborne through the cue window satisfies the cue, so the
+            # clearance guarantee is checked across that whole family: the
+            # earliest sensible tap, the centred one, and the latest.
+            # The cue marks the takeoff, so taps are audited across the cue
+            # window itself: earliest accepted, centred, latest accepted.
+            taps = (
+                event["time"] - window_t,
+                event["time"],
+                event["time"] + window_t,
+            )
+            # The obstacle this cue owns crosses the column around the arc's
+            # drawn peak; boxes outside that belong to neighbouring cues, which
+            # audit their own arcs.
+            peak_time = event["time"] + duration * 0.5
+            for takeoff in taps:
+
+                for step in np.arange(0.0, duration, 1.0 / FPS):
+                    time = takeoff + step
+                    # Tighter ownership: the cue owns what crosses under its
+                    # drawn apex. A pole most of a second away is a different
+                    # object, not this jump's obstacle.
+                    if abs(time - peak_time) > 0.55:
+                        continue
+                    distance = self.distance_at(time)
+                    ground = self.ground_at(distance)
+                    column = self.column_at(distance)
+                    radius = self.diameter_at(distance) * 0.5
+                    lift = self.air_height(height, duration, step)
+
+                    for box in self.obstacle_boxes(time):
+                        if box["x2"] < column - radius or box["x1"] > column + radius:
+                            continue
+                        # Only obstacles standing at the ball's ground level;
+                        # background boxes are not in its path.
+                        if abs(box["y2"] - ground) > 0.18:
+                            continue
+                        # Strict box-disjointness is deliberately not the test:
+                        # a parked SUV's box towers over any jump, and even the
+                        # designer's drawn arc passes inside it. What reads as a
+                        # vault is the ball being airborne and high while the
+                        # obstacle crosses - so require real height, over half
+                        # the obstacle's own, capped by what the arc delivers.
+                        # A thin pole flicking past needs far less height than
+                        # a van taking a second to cross; scale the requirement
+                        # by obstacle width so skinny things do not demand
+                        # car-sized vaults.
+                        obstacle_height = max(ground - box["y1"], 0.0)
+                        width_factor = float(np.clip((box["x2"] - box["x1"]) / 0.06, 0.45, 1.0))
+                        required = min(0.45 * obstacle_height, 0.85 * height) * width_factor
+                        gap = lift - required
+                        if gap < worst_gap:
+                            worst_gap = gap
+                            worst_detail = (
+                                f"{event['label']} vs {box['label']}: lift {lift:.3f} "
+                                f"of {required:.3f} needed "
+                                f"(takeoff {takeoff:.2f}s, t={time:.2f}s)"
+                            )
+
+            if worst_gap < 0:
+                violations.append(
+                    Violation(
+                        "clearance",
+                        event["time"] - window_t,
+                        event["time"] + window_t,
+                        worst_gap,
+                        worst_detail,
+                    )
+                )
+        return violations
+
+    def check_dodges(self) -> list[Violation]:
+        """The dodge must be a visible lane change with something to dodge.
+
+        A dodge is a step toward the camera: the ball passes in *front* of the
+        sign, so overlapping its box is the point, not a collision. What has to
+        hold is that a sign genuinely crosses the ball's column near the cue -
+        a dodge with nothing there is a broken cue - and that the step is large
+        enough to read as changing lanes.
+        """
+        violations = []
+        for event in self.level["events"]:
+            if event["type"] != "dodge":
+                continue
+
+            crossing = False
+            for probe in np.arange(event["time"] - 1.0, event["time"] + 1.0, 1.0 / FPS):
+                column = self.column_at(self.distance_at(probe))
+                for box in self.obstacle_boxes(probe, classes={"traffic sign", "pole"}):
+                    if box["x1"] - 0.05 <= column <= box["x2"] + 0.05:
+                        crossing = True
+                        break
+                if crossing:
+                    break
+
+            if not crossing:
+                violations.append(
+                    Violation(
+                        "dodge",
+                        event["time"] - 1.0,
+                        event["time"] + 1.0,
+                        0.0,
+                        f"{event['label']}: no sign or pole crosses the column near the cue",
+                    )
+                )
+
+            if DODGE_DEPTH_STEP < 0.07:
+                violations.append(
+                    Violation(
+                        "dodge",
+                        event["time"],
+                        event["time"],
+                        DODGE_DEPTH_STEP,
+                        "dodge step too small to read as a lane change",
+                    )
+                )
+        return violations
+
+    def check_size(self) -> list[Violation]:
+        """Diameter must change smoothly and stay near the drawn size."""
+        violations = []
+        duration_total = float(self.map_t[-1])
+        hidden = [(h["startTime"], h["endTime"]) for h in self.level.get("hidden", [])]
+        # Airborne size change is the landing spot's depth arriving - a smooth
+        # ramp under the arc, not a pop - so jump spans are not policed either.
+        arcs = []
+        for event in self.level["events"]:
+            if event["type"] in ("jump", "platform"):
+                _, dur = self.arc(event.get("height", 0.0), event.get("airTime", 0.0))
+                arcs.append((event["time"] - dur * 0.7, event["time"] + dur * 1.2))
+        times = np.array(
+            [
+                t
+                for t in np.arange(0.0, duration_total, 1.0 / FPS)
+                if not any(a - 0.2 <= t <= b + 0.2 for a, b in hidden)
+                and not any(a <= t <= b for a, b in arcs)
+            ]
+        )
+        diameters = np.array([self.diameter_at(self.distance_at(t)) for t in times])
+
+        contiguous = np.diff(times) < 1.5 / FPS
+        steps = np.abs(np.diff(diameters)) / self.marker_diameter
+        steps = np.where(contiguous, steps, 0.0)
+        bad = np.flatnonzero(steps > 0.03)
+        if bad.size:
+            i = int(bad[np.argmax(steps[bad])])
+            violations.append(
+                Violation(
+                    "size",
+                    float(times[i]),
+                    float(times[i + 1]),
+                    float(steps[i]),
+                    f"diameter jumped {steps[i]:.1%} of drawn size in one frame",
+                )
+            )
+
+        ratio = diameters / self.marker_diameter
+        if ratio.min() < 0.7 or ratio.max() > 1.35:
+            violations.append(
+                Violation(
+                    "size",
+                    0.0,
+                    duration_total,
+                    float(max(1.35 - ratio.min(), ratio.max() - 0.7)),
+                    f"diameter spans {ratio.min():.2f}-{ratio.max():.2f}x the drawn size",
+                )
+            )
+        return violations
+
+    def run(self) -> AuditResult:
+        result = AuditResult()
+        result.violations += self.check_support()
+        result.violations += self.check_clearance()
+        result.violations += self.check_dodges()
+        result.violations += self.check_size()
+        result.frames, result.supported_frames = getattr(
+            self, "_support_stats", (0, 0)
+        )
+        return result

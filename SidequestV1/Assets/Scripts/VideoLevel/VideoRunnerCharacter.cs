@@ -51,8 +51,11 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     [Header("Dodge")]
     [SerializeField] float dodgeDuration = 0.55f;
 
-    [Tooltip("Sideways travel as a fraction of the video frame's width.")]
-    [SerializeField] float dodgeDistance = 0.10f;
+    [Tooltip("Step toward the camera, as a fraction of frame height. The lane change.")]
+    [SerializeField] float dodgeDepth = 0.09f;
+
+    [Tooltip("Small sideways drift during the dodge, as a fraction of frame width.")]
+    [SerializeField] float dodgeDistance = 0.04f;
 
     [Header("Size")]
     [Tooltip("Ball diameter as a fraction of the video frame's height.")]
@@ -85,6 +88,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     float airHeight;
     float verticalVelocity;
     float activeJumpHeight;
+    float activeAirTime;
 
     float smoothedGround = -1f;
     float groundVelocity;
@@ -342,6 +346,14 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     /// </remarks>
     float ArcDuration()
     {
+        // The cue's own air time wins when it carries one: it was sized offline
+        // so the arc outlasts the obstacle's crossing of the column, which the
+        // sqrt rule knows nothing about.
+        if (activeAirTime > 0f)
+        {
+            return Mathf.Clamp(activeAirTime, 0.6f, 3.4f);
+        }
+
         return airTime * Mathf.Sqrt(
             Mathf.Max(activeJumpHeight, 0.01f) / Mathf.Max(jumpHeight, 0.01f));
     }
@@ -359,6 +371,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         float distance = director.Distance;
         float best = jumpHeight;
         float bestGap = float.MaxValue;
+        activeAirTime = 0f;
 
         for (int i = 0; i < states.Count; i++)
         {
@@ -378,6 +391,10 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             {
                 bestGap = Mathf.Abs(gap);
                 best = state.Event.height;
+                // The cue's own air time, sized offline so the arc outlasts the
+                // obstacle's crossing; without it the ball landed on cars that
+                // were still under it.
+                activeAirTime = state.Event.airTime;
             }
         }
 
@@ -423,10 +440,13 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
         if (stance == Stance.Dodging && dodgeElapsed >= 0f)
         {
-            // Out and back, so the character returns to its lane on its own.
-            // Steps *away* from where obstacles come from: the world sweeps
-            // opposite to travel, so oncoming things arrive on the heading side.
+            // A dodge is a lane change toward the camera, not a slide along the
+            // road: on screen that is a step DOWN, and the depth scaling grows
+            // the ball as it comes nearer, which is what sells the sidestep.
+            // The ball then passes in front of the sign. Out and back, so it
+            // returns to its lane on its own.
             float phase = Mathf.Sin(Mathf.PI * Mathf.Clamp01(dodgeElapsed / dodgeDuration));
+            groundY += dodgeDepth * phase;
             column += dodgeDistance * phase * -heading;
         }
 

@@ -258,6 +258,28 @@ reach the same answer:
 | `VideoPlayer.playbackSpeed` assigned every frame | Only when it changes — each assignment reaches into the native player |
 | HUD strings rebuilt twice a frame by IMGUI | Rebuilt 10x a second, read during OnGUI |
 
+## The frame-by-frame audit
+
+`uv run analyze audit` steps through the level at video rate, simulating the
+character exactly as the game moves it, and checks every frame against evidence
+from the footage. It exits non-zero on violations, so it works as a regression
+gate. Three guarantees, currently all clean at 99.7% measurable support:
+
+- **Support** — a grounded ball rests on the named surface's measured line, or
+  inside the segmented ground region. No mid-air look.
+- **Clearance** — a jump tapped anywhere in its cue window keeps the ball high
+  while its obstacle crosses the column. Cue times are the drawn arc *starts*
+  (a tap is a takeoff), each cue carries its drawn air time (a van takes longer
+  to cross than a sqrt-of-height arc stays up), and window sizes are *fitted*
+  per obstacle from the detections rather than guessed.
+- **Dodge** — each dodge cue has a real sign crossing the column, and the dodge
+  is a visible lane change: a step toward the camera, the ball growing as it
+  nears, passing in front of the sign.
+
+Strict box-disjointness is deliberately not the clearance criterion: a parked
+SUV's box towers over any jump and even the designer's drawn arc passes inside
+it. The vault reads from being airborne and high, in front of the obstacle.
+
 ## Tests
 
 `Assets/Tests/EditMode/VideoLevelTests.cs` covers the level file contract:

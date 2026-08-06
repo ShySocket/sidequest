@@ -12,6 +12,7 @@ import numpy as np
 from tqdm import tqdm
 
 from .ambient import sample_ambient
+from .audit import LevelAuditor
 from .authored import MarkerTrack, Timeline, build_authored_level, write_authored
 from .decode import VideoInfo, iter_frames, probe
 from .detect import ObstacleDetector, load_detections, save_detections
@@ -370,6 +371,14 @@ def _command_author(args: argparse.Namespace) -> int:
         return 1
     timeline = Timeline.load(timeline_path)
 
+    detection_data = None
+    if args.detections:
+        det_path = Path(args.detections).expanduser().resolve()
+        if det_path.exists():
+            frames, det_w, det_h = load_detections(det_path)
+            detection_data = (frames, det_w, det_h)
+            print(f"detections: {len(frames)} frames, for jump-window fitting")
+
     marker = None
     if args.marker:
         marker_path = Path(args.marker).expanduser().resolve()
@@ -394,6 +403,8 @@ def _command_author(args: argparse.Namespace) -> int:
         travel_direction=result.travel_direction,
         marker=marker,
         ledges=Path(args.ledges).expanduser().resolve() if args.ledges else None,
+        surfaces_for_clamp=surfaces,
+        detection_data=detection_data,
         speed_curve=(result.times, result.speeds),
         analysis_width=args.analysis_width,
         playback_file=args.playback_file,
@@ -569,6 +580,25 @@ def _command_ledges(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_audit(args: argparse.Namespace) -> int:
+    auditor = LevelAuditor(
+        Path(args.level).expanduser().resolve(),
+        Path(args.surfaces).expanduser().resolve(),
+        Path(args.ledges).expanduser().resolve(),
+        Path(args.detections).expanduser().resolve(),
+    )
+    result = auditor.run()
+
+    print(f"frames audited       {result.frames}")
+    if result.frames:
+        print(f"supported            {result.supported_frames / result.frames:.1%}")
+    print(f"violations           {len(result.violations)}")
+    for violation in result.violations:
+        print(f"  {violation}")
+
+    return 0 if result.clean else 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="analyze",
@@ -647,6 +677,10 @@ def main(argv: list[str] | None = None) -> int:
         "--ledges", help="ledges .npz from 'analyze ledges'; snaps the path to real surfaces"
     )
     author.add_argument(
+        "--detections",
+        help="detections .json; sizes each jump cue's window so any accepted tap clears",
+    )
+    author.add_argument(
         "--marker", help="tracked marker JSON from 'analyze track'; overrides the timeline"
     )
     author.add_argument(
@@ -683,6 +717,15 @@ def main(argv: list[str] | None = None) -> int:
     ledges_parser.add_argument("--analysis-width", type=int, default=960)
     ledges_parser.add_argument("--stride", type=int, default=5)
     ledges_parser.set_defaults(func=_command_ledges)
+
+    audit_parser = subparsers.add_parser(
+        "audit", help="frame-by-frame check of the level against footage evidence"
+    )
+    audit_parser.add_argument("--level", default="out/IMG_3775.authored.json")
+    audit_parser.add_argument("--surfaces", default="out/IMG_3775.surfaces.npz")
+    audit_parser.add_argument("--ledges", default="out/IMG_3775.ledges.npz")
+    audit_parser.add_argument("--detections", default="out/IMG_3775.detections.json")
+    audit_parser.set_defaults(func=_command_audit)
 
     args = parser.parse_args(argv)
     return args.func(args)

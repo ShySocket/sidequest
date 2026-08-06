@@ -168,6 +168,8 @@ def build_authored_level(
     travel_direction: int = -1,
     marker: MarkerTrack | None = None,
     ledges: Path | None = None,
+    surfaces_for_clamp: list | None = None,
+    detection_data: tuple | None = None,
     speed_curve: tuple[np.ndarray, np.ndarray] | None = None,
     analysis_width: int = 960,
     playback_file: str | None = None,
@@ -202,6 +204,19 @@ def build_authored_level(
     # shakes.
     blended = smooth(sample_times, blended, PATH_SMOOTHING)
     columns = np.clip(smooth(sample_times, columns, PATH_SMOOTHING), MIN_COLUMN, MAX_COLUMN)
+
+    if surfaces_for_clamp is not None:
+        # Clamp, settle, clamp again: the settle pass smooths the clamp's edges
+        # so they do not read as steps, and the second clamp undoes any float
+        # the smoothing reintroduced.
+        blended = _clamp_to_ground_region(
+            surfaces_for_clamp, sample_times, columns, blended, names
+        )
+        blended = smooth(sample_times, blended, 0.15)
+        blended = _clamp_to_ground_region(
+            surfaces_for_clamp, sample_times, columns, blended, names
+        )
+        blended = smooth(sample_times, blended, 0.15)
 
     path = [
         {
@@ -242,20 +257,42 @@ def build_authored_level(
         for arc in marker.arcs:
             entries.append(
                 {
-                    "time": arc.peak_time,
+                    # The arc's START, not its peak: the cue is where the tap
+                    # belongs, and a tap is a takeoff. Cueing the peak meant a
+                    # tap at the cue took off half an arc late, into obstacles
+                    # that had already reached the column.
+                    "time": arc.start_time,
                     "type": "jump",
                     "label": "marker",
                     "height": arc.height,
+                    # The drawn arc's own span. The sqrt-of-height rule gave
+                    # 1.0-1.5s arcs against obstacles that take longer than that
+                    # to cross the column, so the ball landed while the car was
+                    # still under it; the designer's arcs already cleared them.
+                    "airTime": float(np.clip(arc.duration, 0.8, 3.4)),
                     "source": "marker",
                 }
             )
     entries.extend(e for e in timeline.events if float(e["time"]) > marker_end)
     entries.sort(key=lambda e: e["time"])
 
+    if detection_data is not None:
+        frames, det_w, det_h = detection_data
+        fit_jump_windows(
+            entries,
+            frames,
+            (det_w, det_h),
+            sample_times,
+            blended,
+            columns,
+            2 * marker.median_radius if marker is not None else 0.173,
+        )
+        entries.sort(key=lambda e: e["time"])
+
     for index, entry in enumerate(entries):
         time = float(entry["time"])
         kind = entry.get("type", "jump")
-        window = float(timeline.event_windows.get(kind, 0.55))
+        window = float(entry.get("window") or timeline.event_windows.get(kind, 0.55))
         events.append(
             {
                 "id": index,
@@ -267,6 +304,7 @@ def build_authored_level(
                 # Per-cue height, so a jump drawn small stays small rather than
                 # every jump using one tuned constant.
                 "height": round(float(entry.get("height", 0.0)), 4),
+                "airTime": round(float(entry.get("airTime", 0.0)), 3),
                 "source": entry.get("source", "timeline"),
                 # Half-width in distance, not seconds: the game tracks distance,
                 # and a fixed number of seconds would be a different amount of
@@ -319,6 +357,172 @@ def build_authored_level(
     }
 
 
+GROUND_SURFACES = {"floor", "sidewalk", "grass"}
+
+EDGE_USABLE = 0.88
+"""A ground region whose far edge sits below this is too thin to judge against."""
+
+
+def fit_jump_windows(
+    entries: list[dict],
+    detections,
+    det_size: tuple[int, int],
+    sample_times: np.ndarray,
+    ground: np.ndarray,
+    columns: np.ndarray,
+    marker_diameter: float,
+) -> None:
+    """Size and centre each jump cue so any accepted tap clears its obstacle.
+
+    The cue windows were guesses; the geometry is not. An obstacle occupies the
+    ball's column for a measurable span, the arc delivers height for a
+    computable span, and the safe tap range is where the second covers the
+    first. Each jump entry is re-centred on the middle of that range and its
+    window shrunk to fit inside it, so "tap within the window" genuinely means
+    "never touch" - checked later by the audit rather than assumed here.
+
+    When no tap satisfies the arc, the arc is lengthened: the obstacle simply
+    takes longer to cross than the drawn air time covers, and a floatier jump
+    is the honest resolution, matching the long arcs the designer already drew.
+    """
+    det_times = np.array([f.time for f in detections])
+    det_w, det_h = det_size
+    # Deliberately the full diameter, not the radius: the game's perspective
+    # scale grows the ball toward the camera, and the fitted window must hold
+    # for the largest ball the audit will measure with, plus margin.
+    radius = marker_diameter
+
+    def occupancy(entry: dict, duration: float) -> list[tuple[float, float, float]]:
+        """(time, ground, required lift) where a box owned by this cue crosses."""
+        peak = entry["time"] + duration * 0.5
+        skip = {"sidewalk", "railing", "fence", "tree", "bush"}
+        out = []
+        for probe in np.arange(peak - 0.55, peak + 0.55, 1.0 / 30.0):
+            index = int(np.argmin(np.abs(det_times - probe)))
+            if abs(det_times[index] - probe) > 0.25:
+                continue
+            g = float(np.interp(probe, sample_times, ground))
+            column = float(np.interp(probe, sample_times, columns))
+            for det in detections[index].detections:
+                if det.label in skip:
+                    continue
+                x1, y1, x2, y2 = det.box
+                x1, x2 = x1 / det_w, x2 / det_w
+                y1, y2 = y1 / det_h, y2 / det_h
+                if x2 < column - radius or x1 > column + radius:
+                    continue
+                if abs(y2 - g) > 0.18:
+                    continue
+                width_factor = float(np.clip((x2 - x1) / 0.06, 0.45, 1.0))
+                required = (
+                    min(0.45 * max(g - y1, 0.0), 0.85 * entry["_height"]) * width_factor
+                )
+                out.append((probe, g, required))
+        return out
+
+    for entry in entries:
+        if entry.get("type") != "jump":
+            continue
+        entry["_height"] = float(
+            np.clip(entry.get("height", 0.0) or 0.22, 0.12, 0.50)
+        )
+
+        air_time = float(entry.get("airTime", 0.0) or 1.0)
+        for attempt in range(8):
+            occupied = occupancy(entry, air_time)
+            if not occupied:
+                break
+
+            def lift(tap: float, t: float) -> float:
+                phase = (t - tap) / air_time
+                if phase <= 0 or phase >= 1:
+                    return 0.0
+                return entry["_height"] * 4.0 * phase * (1.0 - phase)
+
+            candidates = np.arange(
+                occupied[-1][0] - air_time + 0.05, occupied[0][0] + 0.01, 1.0 / 60.0
+            )
+            ok = np.array(
+                [
+                    all(lift(tap, t) >= req + 0.03 for t, _, req in occupied)
+                    for tap in candidates
+                ]
+            )
+            if ok.any():
+                good = candidates[ok]
+                centre = float(good.mean())
+                half = max(float(good.max() - good.min()) * 0.5, 0.10)
+                moved = abs(centre - entry["time"])
+                entry["time"] = centre
+                entry["window"] = round(half * 2, 3)
+                # Re-centring moves the peak the occupancy was measured around;
+                # fit once more at the new centre so the two agree.
+                if moved > 0.05 and attempt < 7:
+                    continue
+                break
+
+            # Nothing satisfies: lengthen the arc and try again.
+            air_time = min(air_time * 1.2, 3.4)
+            entry["airTime"] = round(air_time, 3)
+
+        entry.pop("_height", None)
+
+
+def _clamp_to_ground_region(
+    surfaces: list,
+    sample_times: np.ndarray,
+    columns: np.ndarray,
+    ground: np.ndarray,
+    names: list[str],
+) -> np.ndarray:
+    """Keep the ball inside the visible ground region on ground surfaces.
+
+    The segmented line is the region's *far edge*; anywhere at or below it is
+    ground. A resting ball above it has nothing visible under it - the mid-air
+    look - so such samples are pulled down to just inside the region. The edge
+    is a temporal median over a small window, because a single segmentation
+    frame is too noisy to move the character by.
+    """
+    from .segment import NO_GROUND
+
+    times = np.array([s.time for s in surfaces])
+    result = ground.copy()
+
+    for index, (time, column) in enumerate(zip(sample_times, columns)):
+        if names[index] not in GROUND_SURFACES:
+            continue
+
+        near = np.flatnonzero(np.abs(times - time) <= 0.25)
+        edges = []
+        for frame in near:
+            surface = surfaces[frame]
+            if not surface.is_plausible_ground:
+                continue
+            pixel = int(np.clip(column * surface.width, 0, surface.width - 1))
+            window = surface.run_line[max(0, pixel - 25) : pixel + 26]
+            window = window[window != NO_GROUND]
+            if window.size:
+                edges.append(float(np.median(window)) / surface.height)
+
+        if len(edges) < 2:
+            continue
+
+        # A wall passage makes the edge flap between open ground and a bottom
+        # sliver; the median of a bimodal sample describes nothing that exists,
+        # so inconsistent evidence is no evidence.
+        if max(edges) - min(edges) > 0.15:
+            continue
+
+        edge = float(np.median(edges))
+        if edge > EDGE_USABLE:
+            continue  # region too thin to judge against
+
+        if result[index] < edge - 0.02:
+            result[index] = edge - 0.02
+
+    return result
+
+
 def _snap_to_ledges(
     path: Path,
     marker: MarkerTrack,
@@ -342,49 +546,69 @@ def _snap_to_ledges(
 
     result = ground.copy()
     chosen = list(names)
+    measured = np.full(sample_times.size, np.nan)
 
     for index, (time, column) in enumerate(zip(sample_times, columns)):
         if time > marker.animated_until:
+            continue
+
+        # The timeline names the surface the character is meant to be on, which
+        # geometry cannot infer: standing on a hedge and passing in front of one
+        # look identical from a top edge alone. Only that surface's ledge is
+        # considered; the ledge then supplies the exact height.
+        wanted = names[index]
+        if wanted not in lines:
             continue
 
         frame = int(np.argmin(np.abs(times - time)))
         if abs(times[frame] - time) > 0.5:
             continue
 
-        target = float(np.interp(time, marker.times, marker.y))
         pixel = int(np.clip(column * width, 0, width - 1))
-
-        # The timeline names the surface the character is meant to be on, which
-        # geometry cannot infer: standing on a hedge and passing in front of one
-        # look identical from a top edge alone. When that surface has a ledge,
-        # only it is considered; the ledge then supplies the exact height.
-        # Only the named surface is considered. Falling back to "nearest ledge"
-        # put the character on a hedge during stretches the timeline calls floor,
-        # simply because a hedge happened to be the closest thing detected.
-        wanted = names[index]
-        if wanted not in lines:
+        window = lines[wanted][frame, max(0, pixel - 20) : pixel + 21]
+        window = window[window != NO_GROUND]
+        if window.size == 0:
             continue
 
-        best_name = None
-        best_value = 0.0
-        best_gap = LEDGE_SNAP * 2.5
+        value = float(np.median(window)) / height
 
-        for name, line in {wanted: lines[wanted]}.items():
-            window = line[frame, max(0, pixel - 20) : pixel + 21]
-            window = window[window != NO_GROUND]
-            if window.size == 0:
-                continue
+        # Sanity-gate against the local resting path, never the raw marker: the
+        # marker mid-jump is nowhere near any ledge, and gating on it left the
+        # hedge unsnapped exactly where its sign-jumps happen. The gate only
+        # rejects wild segmentation frames.
+        low = int(np.searchsorted(sample_times, time - 0.5))
+        high = int(np.searchsorted(sample_times, time + 0.5))
+        local = float(np.median(ground[max(0, low) : max(high, low + 1)]))
+        if abs(value - local) < 0.35:
+            measured[index] = value
 
-            value = float(np.median(window)) / height
-            gap = abs(value - target)
-            if gap < best_gap:
-                best_gap = gap
-                best_name = name
-                best_value = value
+    # The ledge is detected in under half the frames, and leaving the resting
+    # path in the gaps had the ball hopping between the hedge top and a line a
+    # sixth of a frame below it. Within each named span, interpolate the
+    # measured ledge across its gaps: the surface is continuous even when its
+    # detection is not.
+    index = 0
+    total = sample_times.size
+    while index < total:
+        wanted = names[index]
+        if wanted not in lines:
+            index += 1
+            continue
 
-        if best_name is not None:
-            result[index] = best_value
-            chosen[index] = best_name
+        end = index
+        while end + 1 < total and names[end + 1] == wanted:
+            end += 1
+
+        span = slice(index, end + 1)
+        span_measured = measured[span]
+        known = np.isfinite(span_measured)
+        if known.sum() >= 2:
+            positions = np.arange(span_measured.size)
+            result[span] = np.interp(positions, positions[known], span_measured[known])
+            for offset in range(index, end + 1):
+                chosen[offset] = wanted
+
+        index = end + 1
 
     return result, chosen
 

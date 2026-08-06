@@ -36,17 +36,20 @@
     {
       "time": 11.0,
       "type": "jump",
-      "label": "van"
+      "label": "van",
+      "airTime": 1.7
     },
     {
       "time": 18.0,
       "type": "jump",
-      "label": "van"
+      "label": "van",
+      "airTime": 1.7
     },
     {
       "time": 24.0,
       "type": "jump",
-      "label": "people"
+      "label": "people",
+      "airTime": 1.7
     },
     {
       "time": 25.2,
@@ -56,42 +59,50 @@
     {
       "time": 26.4,
       "type": "jump",
-      "label": "sign"
+      "label": "sign",
+      "airTime": 1.7
     },
     {
       "time": 27.6,
       "type": "jump",
-      "label": "sign beside hedge"
+      "label": "sign beside hedge",
+      "airTime": 1.7
     },
     {
       "time": 28.6,
       "type": "jump",
-      "label": "sign beside hedge"
+      "label": "sign beside hedge",
+      "airTime": 1.7
     },
     {
       "time": 31.5,
       "type": "jump",
-      "label": "car"
+      "label": "car",
+      "airTime": 1.7
     },
     {
       "time": 34.0,
       "type": "jump",
-      "label": "car"
+      "label": "car",
+      "airTime": 1.7
     },
     {
       "time": 36.0,
       "type": "jump",
-      "label": "car"
+      "label": "car",
+      "airTime": 1.7
     },
     {
       "time": 41.0,
       "type": "jump",
-      "label": "car"
+      "label": "car",
+      "airTime": 1.7
     },
     {
       "time": 46.0,
       "type": "jump",
-      "label": "chain"
+      "label": "chain",
+      "airTime": 1.3
     },
     {
       "time": 55.0,
@@ -106,7 +117,8 @@
     {
       "time": 77.0,
       "type": "jump",
-      "label": "fence"
+      "label": "fence",
+      "airTime": 1.7
     },
     {
       "time": 82.0,
@@ -116,7 +128,7 @@
   ],
   "hidden": [
     {
-      "from": 62.0,
+      "from": 58.5,
       "to": 75.0
     }
   ],

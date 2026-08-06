@@ -121,6 +121,14 @@ public class VideoLevelEvent
     /// <remarks>Zero means none was recorded, and the tuned default is used.</remarks>
     public float height;
 
+    /// <summary>Seconds of air the designer's drawn arc spans. Zero = derive from height.</summary>
+    /// <remarks>
+    /// Carried per cue because the obstacle decides it: a van takes longer to
+    /// cross the column than a sqrt-of-height arc stays airborne, and the ball
+    /// was landing on cars mid-crossing until arcs matched the drawn ones.
+    /// </remarks>
+    public float airTime;
+
     public string source;
 }
 

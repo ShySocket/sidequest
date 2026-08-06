@@ -97,14 +97,9 @@ public sealed class UnityGpsSpeedProvider : MonoBehaviour, IVehicleSpeedProvider
             yield break;
         }
 
-        if (!Input.location.isEnabledByUser)
-        {
-            TrackingState = GpsTrackingState.LocationServicesDisabled;
-            IsTrackingAvailable = false;
-            trackingCoroutine = null;
-            yield break;
-        }
-
+        // Do not bail out when isEnabledByUser is false: on iOS it stays
+        // false until the user answers the system dialog, and that dialog is
+        // only presented by Start(). Starting is what asks the question.
         TrackingState = GpsTrackingState.Initializing;
         Input.location.Start(
             configuration.DesiredGpsAccuracyMeters,
@@ -120,7 +115,9 @@ public sealed class UnityGpsSpeedProvider : MonoBehaviour, IVehicleSpeedProvider
 
         if (Input.location.status != LocationServiceStatus.Running || stopRequested)
         {
-            TrackingState = GpsTrackingState.SignalLost;
+            TrackingState = Input.location.isEnabledByUser
+                ? GpsTrackingState.SignalLost
+                : GpsTrackingState.LocationServicesDisabled;
             IsTrackingAvailable = false;
             Input.location.Stop();
             trackingCoroutine = null;
