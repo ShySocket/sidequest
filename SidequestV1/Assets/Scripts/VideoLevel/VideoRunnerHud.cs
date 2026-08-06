@@ -15,15 +15,20 @@ public sealed class VideoRunnerHud : MonoBehaviour
 
     const string Controls =
         "SPACE / tap = jump    DOWN or S = dodge    R = restart    "
-        + "- / = speed    LEFT / RIGHT = scrub 5s    F1 = hide";
+        + "- / = speed    LEFT / RIGHT = scrub 5s    T = timer    F1 = hide";
 
     [SerializeField] LevelDirector director;
     [SerializeField] VideoRunnerCharacter character;
     [SerializeField] bool showDebug = true;
 
+    [Tooltip("Large top-left clock, for noting the time of anything worth changing.")]
+    [SerializeField] bool showTimer = true;
+
     GUIStyle heading;
     GUIStyle body;
     GUIStyle cue;
+    GUIStyle timer;
+    Texture2D chip;
     float outcomeShownAt = -10f;
     string shownOutcome = string.Empty;
 
@@ -36,6 +41,12 @@ public sealed class VideoRunnerHud : MonoBehaviour
     string statusText = string.Empty;
     string cueText;
     float cueAlpha;
+
+    // Unlike the rest of the HUD this is rebuilt every frame rather than ten
+    // times a second: it is the instrument used to write down when something
+    // needs changing, so a stale reading is the one thing it must never show.
+    // One short string per frame is a rounding error next to decoding video.
+    string timerText = string.Empty;
 
     void Start()
     {
@@ -87,6 +98,13 @@ public sealed class VideoRunnerHud : MonoBehaviour
             showDebug = !showDebug;
         }
 
+        // Its own toggle, not F1's: the timer stays up while the verbose rows
+        // are hidden, and can still be cleared away for a clean capture.
+        if (Keyboard.current.tKey.wasPressedThisFrame)
+        {
+            showTimer = !showTimer;
+        }
+
         // Left/right scrub by 5s, so a cue that looks wrong can be replayed
         // without sitting through the run again.
         if (Keyboard.current.rightArrowKey.wasPressedThisFrame)
@@ -108,6 +126,14 @@ public sealed class VideoRunnerHud : MonoBehaviour
         {
             return;
         }
+
+        // Seconds are the unit timeline.json is written in, so a time read off
+        // this display can be typed straight into the timeline. The frame
+        // number rides along for frame-by-frame notes.
+        float fps = director.Level.Fps;
+        timerText = fps > 0f
+            ? $"{director.VideoTime:0.00}s   f{director.VideoTime * fps:0}"
+            : $"{director.VideoTime:0.00}s";
 
         // The upcoming-cue scan has to run every frame or the prompt lags, but
         // it is a walk over a short list, not string work.
@@ -162,6 +188,29 @@ public sealed class VideoRunnerHud : MonoBehaviour
 
         cue = new GUIStyle(GUI.skin.label) { fontSize = 40, fontStyle = FontStyle.Bold };
         cue.alignment = TextAnchor.MiddleCenter;
+
+        timer = new GUIStyle(GUI.skin.label)
+        {
+            fontSize = 34,
+            fontStyle = FontStyle.Bold,
+            alignment = TextAnchor.MiddleLeft,
+        };
+        timer.normal.textColor = Color.white;
+
+        // The footage is bright daylight, so white text alone disappears against
+        // pale concrete. A dark chip behind it keeps the reading legible over
+        // every frame of the clip.
+        chip = new Texture2D(1, 1) { hideFlags = HideFlags.HideAndDontSave };
+        chip.SetPixel(0, 0, new Color(0f, 0f, 0f, 0.62f));
+        chip.Apply();
+    }
+
+    void OnDestroy()
+    {
+        if (chip != null)
+        {
+            Destroy(chip);
+        }
     }
 
     void OnGUI()
@@ -173,12 +222,24 @@ public sealed class VideoRunnerHud : MonoBehaviour
 
         EnsureStyles();
 
-        GUI.Label(new Rect(18, 12, 600, 36), scoreText, heading);
+        float top = 12f;
+        if (showTimer)
+        {
+            // Sized to the text so the chip fits three-digit times without
+            // either clipping or leaving a wide empty bar.
+            Vector2 size = timer.CalcSize(new GUIContent(timerText));
+            var box = new Rect(14f, top, size.x + 28f, size.y + 14f);
+            GUI.DrawTexture(box, chip);
+            GUI.Label(new Rect(box.x + 14f, box.y, size.x, box.height), timerText, timer);
+            top = box.yMax + 8f;
+        }
+
+        GUI.Label(new Rect(18, top, 600, 34), scoreText, heading);
 
         if (showDebug)
         {
-            GUI.Label(new Rect(18, 50, 600, 24), statusText, body);
-            GUI.Label(new Rect(18, 72, 820, 24), Controls, body);
+            GUI.Label(new Rect(18, top + 38f, 600, 24), statusText, body);
+            GUI.Label(new Rect(18, top + 60f, 860, 24), Controls, body);
         }
 
         DrawUpcomingCue();

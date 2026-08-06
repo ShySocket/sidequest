@@ -75,6 +75,9 @@ public sealed class VideoLevel
     /// <summary>Diameter the marker was drawn at; 0 when no marker was used.</summary>
     public float MarkerDiameter => data.markerDiameter;
     public float Duration => data.source != null ? data.source.duration : 0f;
+
+    /// <summary>Frame rate of the source clip, for reporting frame numbers.</summary>
+    public float Fps => data.source != null ? data.source.fps : 0f;
     public float CharacterColumn => data.characterColumn;
 
     /// <summary>-1 travels right-to-left, +1 left-to-right. Never 0.</summary>

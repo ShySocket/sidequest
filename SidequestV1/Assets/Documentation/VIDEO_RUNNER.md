@@ -38,11 +38,15 @@ re-running it is always a safe way back to a working scene.
 | R | Restart |
 | `-` / `=` | Playback speed |
 | Left / Right arrow | Scrub 5s |
+| T | Toggle the timer |
 | F1 | Toggle the debug readout |
 
-The HUD shows the current **video time**, which is the unit `timeline.json` is
-written in — so a cue that feels early or late can be read off the screen and
-corrected directly.
+A large clock sits top-left showing **video time in seconds**, plus the source
+frame number — the units `timeline.json` and the audit are written in. Read a
+time off it, note what should change, and type that number straight into the
+timeline. It updates every frame (the rest of the HUD refreshes ten times a
+second) because a stale reading is the one thing an annotation clock must never
+show. `T` hides it for a clean capture.
 
 ## Where the movement comes from
 
