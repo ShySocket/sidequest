@@ -90,6 +90,7 @@ public sealed class VideoRunnerBallView : MonoBehaviour
 
     public void Apply(in Pose pose, float deltaTime)
     {
+        EnsureBuilt();
         if (ball == null)
         {
             return;
@@ -116,6 +117,62 @@ public sealed class VideoRunnerBallView : MonoBehaviour
 
         UpdateBall(pose, radius, deltaTime);
         UpdateShadow(pose);
+    }
+
+    /// <summary>
+    /// Create the ball and its shadow if the scene has not supplied them.
+    /// </summary>
+    /// <remarks>
+    /// A saved scene is a snapshot: adding objects to the editor builder does
+    /// nothing for a scene saved before that change, and the failure is silent -
+    /// the character simply keeps whatever it was last saved with. Building the
+    /// visual here means any scene, however old, gets the current character.
+    /// RearCameraBackground already self-installs for the same reason.
+    /// </remarks>
+    void EnsureBuilt()
+    {
+        if (ball != null)
+        {
+            return;
+        }
+
+        GameObject sphere = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+        sphere.name = "Ball";
+        Destroy(sphere.GetComponent<Collider>());
+        sphere.transform.SetParent(transform, false);
+        ball = sphere.transform;
+        ballRenderer = sphere.GetComponent<MeshRenderer>();
+        ballRenderer.sharedMaterial = LoadMaterial("Sidequest/BallLit");
+        ballRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        ballRenderer.receiveShadows = false;
+
+        GameObject blob = GameObject.CreatePrimitive(PrimitiveType.Quad);
+        blob.name = "ContactShadow";
+        Destroy(blob.GetComponent<Collider>());
+        blob.transform.SetParent(transform, false);
+        blobShadow = blob.transform;
+        blobShadowRenderer = blob.GetComponent<MeshRenderer>();
+        blobShadowRenderer.sharedMaterial = LoadMaterial("Sidequest/BlobShadow");
+        blobShadowRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+        blobShadowRenderer.receiveShadows = false;
+
+        // Any sprite left over from an older scene would draw through the ball.
+        foreach (SpriteRenderer stale in GetComponentsInChildren<SpriteRenderer>())
+        {
+            stale.enabled = false;
+        }
+    }
+
+    static Material LoadMaterial(string shaderName)
+    {
+        Shader shader = Shader.Find(shaderName);
+        if (shader == null)
+        {
+            Debug.LogError($"VideoRunnerBallView: shader '{shaderName}' not found");
+            return null;
+        }
+
+        return new Material(shader);
     }
 
     void UpdateBall(in Pose pose, float radius, float deltaTime)

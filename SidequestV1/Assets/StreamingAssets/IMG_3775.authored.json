@@ -11,6 +11,7 @@
  "distanceUnits": "relative",
  "characterColumn": 0.35,
  "travelDirection": -1,
+ "markerDiameter": 0.17312,
  "totalDistance": 41396.212,
  "timeToDistance": [
   {

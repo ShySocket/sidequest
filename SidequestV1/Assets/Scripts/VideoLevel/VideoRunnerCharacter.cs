@@ -130,6 +130,14 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         {
             view = GetComponentInChildren<VideoRunnerBallView>();
         }
+
+        // A scene saved before the ball existed has no view component at all, so
+        // there would be nothing to self-heal further down. Adding it here means
+        // any scene, however old, renders the current character.
+        if (view == null)
+        {
+            view = gameObject.AddComponent<VideoRunnerBallView>();
+        }
     }
 
     void Update()
@@ -428,7 +436,11 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         // Nearer ground sits lower in frame, so the ball grows as the run line
         // descends. Without this it appears to swim as the road nears and recedes.
         float depth = Mathf.InverseLerp(depthRange.x, depthRange.y, groundY);
-        float diameter = characterHeight * frameHeight * Mathf.Lerp(farScale, nearScale, depth);
+        // The level records the diameter the movement was drawn at; prefer it
+        // over the serialized field, which a scene saved earlier would pin.
+        float authored = director.Level.MarkerDiameter;
+        float baseDiameter = authored > 0f ? authored : characterHeight;
+        float diameter = baseDiameter * frameHeight * Mathf.Lerp(farScale, nearScale, depth);
 
         transform.position = groundPosition;
 

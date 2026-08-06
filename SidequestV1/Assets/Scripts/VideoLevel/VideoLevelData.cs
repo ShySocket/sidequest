@@ -32,6 +32,10 @@ public class VideoLevelData
     /// </remarks>
     public int travelDirection = -1;
 
+    /// <summary>Diameter the marker was drawn at, 0..1 of frame height.</summary>
+    /// <remarks>Zero when no marker was used, and the tuned default applies.</remarks>
+    public float markerDiameter;
+
     public float totalDistance;
     public List<VideoLevelTimePoint> timeToDistance = new List<VideoLevelTimePoint>();
     public List<VideoLevelPathPoint> path = new List<VideoLevelPathPoint>();

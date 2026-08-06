@@ -51,6 +51,9 @@ public sealed class VideoLevel
 
     public IReadOnlyList<VideoLevelEvent> Events => data.events;
     public float TotalDistance => data.totalDistance;
+
+    /// <summary>Diameter the marker was drawn at; 0 when no marker was used.</summary>
+    public float MarkerDiameter => data.markerDiameter;
     public float Duration => data.source != null ? data.source.duration : 0f;
     public float CharacterColumn => data.characterColumn;
 

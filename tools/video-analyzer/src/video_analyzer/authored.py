@@ -290,6 +290,9 @@ def build_authored_level(
         # -1 = the character travels right-to-left across the screen. Measured
         # from optical flow, not assumed: filming out the other window flips it.
         "travelDirection": travel_direction,
+        # The size the movement was drawn at, so the game does not depend on a
+        # tuning value baked into a saved scene.
+        "markerDiameter": round(2 * marker.median_radius, 5) if marker is not None else 0.0,
         "totalDistance": round(distance_map.total_distance, 3),
         "timeToDistance": time_to_distance,
         "path": path,
