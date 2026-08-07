@@ -112,6 +112,26 @@ class Timeline:
     surface_offsets: dict[str, float]
     event_windows: dict[str, float]
 
+    authoritative: bool = False
+    """When set, the timeline IS the choreography: marker arcs are ignored for
+    events, nothing re-centres the cues, and every jump happens at exactly its
+    written time on every playthrough. Built for the frame-annotated design
+    where input only scores and a miss flashes the ball red."""
+
+    ball_scale: float = 1.0
+    """Multiplier on the marker-drawn ball diameter."""
+
+    post_marker_column: float = 0.35
+    """Where the character rides once the marker stops being animated."""
+
+    path_adjust: list[dict] = None  # type: ignore[assignment]
+    """Spans of {from,to,dy}: deliberate vertical nudges to the resting path,
+    e.g. 'roll along the middle of the sidewalk, a bit in front'."""
+
+    behind_spans: list[dict] = None  # type: ignore[assignment]
+    """Spans where the ball should pass BEHIND foreground poles; emitted as a
+    foreground track the game re-draws over the ball."""
+
     @staticmethod
     def load(path: Path) -> Timeline:
         raw = json.loads(path.read_text())
@@ -121,6 +141,11 @@ class Timeline:
             hidden=sorted(raw.get("hidden", []), key=lambda h: h["from"]),
             surface_offsets=raw.get("surfaceOffsets", {}),
             event_windows=raw.get("eventWindows", {}),
+            authoritative=bool(raw.get("authoritativeEvents", False)),
+            ball_scale=float(raw.get("ballScale", 1.0)),
+            post_marker_column=float(raw.get("postMarkerColumn", 0.35)),
+            path_adjust=raw.get("pathAdjust", []),
+            behind_spans=raw.get("behindSpans", []),
         )
 
 
@@ -191,7 +216,9 @@ def build_authored_level(
     columns = np.full(sample_times.size, character_column)
 
     if marker is not None:
-        blended, columns = _apply_marker(marker, sample_times, blended, columns)
+        blended, columns = _apply_marker(
+            marker, sample_times, blended, columns, timeline.post_marker_column
+        )
 
     names = [surface_at(timeline, t) for t in sample_times]
     if ledges is not None and marker is not None:
@@ -217,6 +244,16 @@ def build_authored_level(
             surfaces_for_clamp, sample_times, columns, blended, names
         )
         blended = smooth(sample_times, blended, 0.15)
+
+    # Annotated nudges last, on top of everything measured: "roll along the
+    # middle of the sidewalk" or "land above the parked car" are design intent
+    # the evidence cannot supply. Eased in and out over 0.4s so a span boundary
+    # never reads as a step.
+    for span in timeline.path_adjust or []:
+        start, end = float(span["from"]), float(span["to"])
+        ramp_in = np.clip((sample_times - start) / 0.4, 0.0, 1.0)
+        ramp_out = np.clip((end - sample_times) / 0.4, 0.0, 1.0)
+        blended = blended + float(span["dy"]) * np.minimum(ramp_in, ramp_out)
 
     path = [
         {
@@ -248,46 +285,63 @@ def build_authored_level(
 
     events = []
 
-    # Marker arcs describe the jumps the designer actually drew, so they replace
-    # the hand-typed cues wherever the marker was animated. Beyond that the
-    # timeline is all there is.
-    marker_end = marker.animated_until if marker is not None else -1.0
-    entries: list[dict] = []
-    if marker is not None:
-        for arc in marker.arcs:
-            entries.append(
-                {
-                    # The arc's START, not its peak: the cue is where the tap
-                    # belongs, and a tap is a takeoff. Cueing the peak meant a
-                    # tap at the cue took off half an arc late, into obstacles
-                    # that had already reached the column.
-                    "time": arc.start_time,
-                    "type": "jump",
-                    "label": "marker",
-                    "height": arc.height,
-                    # The drawn arc's own span. The sqrt-of-height rule gave
-                    # 1.0-1.5s arcs against obstacles that take longer than that
-                    # to cross the column, so the ball landed while the car was
-                    # still under it; the designer's arcs already cleared them.
-                    "airTime": float(np.clip(arc.duration, 0.8, 3.4)),
-                    "source": "marker",
-                }
-            )
-    entries.extend(e for e in timeline.events if float(e["time"]) > marker_end)
-    entries.sort(key=lambda e: e["time"])
-
-    if detection_data is not None:
-        frames, det_w, det_h = detection_data
-        fit_jump_windows(
-            entries,
-            frames,
-            (det_w, det_h),
-            sample_times,
-            blended,
-            columns,
-            2 * marker.median_radius if marker is not None else 0.173,
-        )
+    if timeline.authoritative:
+        # The timeline IS the choreography: annotated takeoffs, landings and
+        # heights, identical on every playthrough. Marker arcs and the window
+        # fitter would move them, so both are bypassed. What still gets derived
+        # is the scoring window and the warning lead, from the gaps between
+        # events: a chained pair 0.4s apart cannot share a 0.7s window.
+        entries = [dict(e) for e in timeline.events]
         entries.sort(key=lambda e: e["time"])
+        for position, entry in enumerate(entries):
+            previous_gap = (
+                entry["time"] - entries[position - 1]["time"] if position > 0 else 99.0
+            )
+            next_gap = (
+                entries[position + 1]["time"] - entry["time"]
+                if position + 1 < len(entries)
+                else 99.0
+            )
+            entry["window"] = float(
+                np.clip(0.8 * min(previous_gap, next_gap), 0.24, 0.7)
+            )
+            # 0.55s reads as "now": the 1.2s fade-in was annotated as coming
+            # way too soon.
+            entry["lead"] = float(np.clip(0.7 * previous_gap, 0.35, 0.55))
+    else:
+        # Marker arcs describe the jumps the designer actually drew, so they
+        # replace the hand-typed cues wherever the marker was animated. Beyond
+        # that the timeline is all there is.
+        marker_end = marker.animated_until if marker is not None else -1.0
+        entries = []
+        if marker is not None:
+            for arc in marker.arcs:
+                entries.append(
+                    {
+                        # The arc's START, not its peak: a tap is a takeoff.
+                        "time": arc.start_time,
+                        "type": "jump",
+                        "label": "marker",
+                        "height": arc.height,
+                        "airTime": float(np.clip(arc.duration, 0.8, 3.4)),
+                        "source": "marker",
+                    }
+                )
+        entries.extend(e for e in timeline.events if float(e["time"]) > marker_end)
+        entries.sort(key=lambda e: e["time"])
+
+        if detection_data is not None:
+            frames, det_w, det_h = detection_data
+            fit_jump_windows(
+                entries,
+                frames,
+                (det_w, det_h),
+                sample_times,
+                blended,
+                columns,
+                2 * marker.median_radius if marker is not None else 0.173,
+            )
+            entries.sort(key=lambda e: e["time"])
 
     for index, entry in enumerate(entries):
         time = float(entry["time"])
@@ -305,6 +359,10 @@ def build_authored_level(
                 # every jump using one tuned constant.
                 "height": round(float(entry.get("height", 0.0)), 4),
                 "airTime": round(float(entry.get("airTime", 0.0)), 3),
+                # Scoring window (full seconds) and warning lead, for the
+                # press-only-scores design.
+                "windowSeconds": round(window, 3),
+                "lead": round(float(entry.get("lead", 0.55)), 3),
                 "source": entry.get("source", "timeline"),
                 # Half-width in distance, not seconds: the game tracks distance,
                 # and a fixed number of seconds would be a different amount of
@@ -347,11 +405,19 @@ def build_authored_level(
         "travelDirection": travel_direction,
         # The size the movement was drawn at, so the game does not depend on a
         # tuning value baked into a saved scene.
-        "markerDiameter": round(2 * marker.median_radius, 5) if marker is not None else 0.0,
+        "markerDiameter": round(
+            2 * marker.median_radius * timeline.ball_scale, 5
+        ) if marker is not None else 0.0,
         "totalDistance": round(distance_map.total_distance, 3),
         "timeToDistance": time_to_distance,
         "path": path,
         "screenSpeed": screen_speed,
+        # Regions of the video the game re-draws IN FRONT of the ball, so it
+        # passes visibly behind the poles the annotations name. Emitted only
+        # inside behindSpans, from pole detections near the ball's column.
+        "foreground": _foreground_track(
+            timeline, detection_data, distance_map, sample_times, columns
+        ),
         "events": events,
         "hidden": hidden,
     }
@@ -618,6 +684,7 @@ def _apply_marker(
     sample_times: np.ndarray,
     ground: np.ndarray,
     columns: np.ndarray,
+    post_column: float = 0.35,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Replace the inferred path with the designer's, where they drew one.
 
@@ -640,19 +707,79 @@ def _apply_marker(
     weight = np.clip((marker.animated_until - sample_times) / SEAM_BLEND, 0.0, 1.0)
     weight = weight * weight * (3.0 - 2.0 * weight)
 
-    # Ease from where the marker left the character back to the default column
-    # over COLUMN_RETURN seconds, rather than holding the far edge for the rest
-    # of the run.
-    default_column = float(columns[-1]) if columns.size else 0.35
-    ease = np.clip((sample_times - marker.animated_until) / COLUMN_RETURN, 0.0, 1.0)
+    # The column eases to its post-marker home BEFORE the marker ends,
+    # overriding the marker's final drift: the drawn dot parks at the far left
+    # edge, and following it there made the chain jump look like the ball was
+    # arriving from the side. Easing over [end-2.3, end-0.3] means the column
+    # is already settled when the chain arc fires.
+    post = float(np.clip(post_column, MIN_COLUMN, MAX_COLUMN))
+    ease = np.clip(
+        (sample_times - (marker.animated_until - 2.3)) / 2.0, 0.0, 1.0
+    )
     ease = ease * ease * (3.0 - 2.0 * ease)
-    held = float(np.clip(marker_column[-1], MIN_COLUMN, MAX_COLUMN))
-    after = held + (default_column - held) * ease
+    column = sampled_column * (1.0 - ease) + post * ease
 
     return (
         ground * (1.0 - weight) + sampled_ground * weight,
-        after * (1.0 - weight) + sampled_column * weight,
+        column,
     )
+
+
+def _foreground_track(
+    timeline: Timeline,
+    detection_data: tuple | None,
+    distance_map: DistanceMap,
+    sample_times: np.ndarray,
+    columns: np.ndarray,
+) -> list[dict]:
+    """Pole boxes the ball should pass behind, keyed on distance.
+
+    True per-pixel occlusion would need runtime segmentation; a rectangle of
+    the video re-drawn over the ball is enough, because the re-drawn pixels are
+    identical to the background beneath them - the only visible effect is that
+    the ball disappears behind that strip, which is exactly what "behind the
+    pole" looks like. Boxes are widened slightly so the ball never pokes out of
+    a too-tight detection.
+    """
+    if detection_data is None or not (timeline.behind_spans or []):
+        return []
+
+    frames, det_w, det_h = detection_data
+    track: list[dict] = []
+    for frame in frames:
+        if not any(
+            float(s["from"]) <= frame.time <= float(s["to"])
+            for s in timeline.behind_spans
+        ):
+            continue
+
+        column = float(np.interp(frame.time, sample_times, columns))
+        best = None
+        for det in frame.detections:
+            if det.label not in ("pole", "traffic sign"):
+                continue
+            x1, y1, x2, y2 = det.box
+            x1, x2 = x1 / det_w, x2 / det_w
+            y1, y2 = y1 / det_h, y2 / det_h
+            if x2 < column - 0.12 or x1 > column + 0.12:
+                continue
+            centre = 0.5 * (x1 + x2)
+            if best is None or abs(centre - column) < abs(best[0] - column):
+                best = (centre, x1, y1, x2, y2)
+
+        if best is not None:
+            _, x1, y1, x2, y2 = best
+            track.append(
+                {
+                    "d": round(float(distance_map.distance_at(frame.time)), 3),
+                    "x1": round(max(0.0, x1 - 0.008), 4),
+                    "y1": round(max(0.0, y1 - 0.01), 4),
+                    "x2": round(min(1.0, x2 + 0.008), 4),
+                    "y2": round(min(1.0, y2 + 0.01), 4),
+                }
+            )
+
+    return track
 
 
 def _smooth_step(values: np.ndarray, times: np.ndarray, ramp: float) -> np.ndarray:

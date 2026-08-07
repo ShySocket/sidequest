@@ -42,12 +42,6 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     [Tooltip("Seconds from take-off to landing for a default-height jump.")]
     [SerializeField] float airTime = 1.0f;
 
-    [Tooltip("How far ahead to look for the cue this jump is aimed at.")]
-    [SerializeField] float cueLookahead = 1.4f;
-
-    [Tooltip("A tap this long before landing still buffers the next jump.")]
-    [SerializeField] float inputBuffer = 0.15f;
-
     [Header("Dodge")]
     [SerializeField] float dodgeDuration = 0.55f;
 
@@ -95,7 +89,6 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     float smoothedColumn = -1f;
     float columnVelocity;
     float dodgeElapsed = -1f;
-    float bufferedJumpAt = -1f;
     int cleared;
     int missed;
     string lastOutcome = string.Empty;
@@ -113,8 +106,8 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     {
         public VideoLevelEvent Event;
         public VideoLevelEventType Type;
-        public bool Entered;
-        public bool Satisfied;
+        public bool Started;
+        public bool Scored;
         public bool Resolved;
     }
 
@@ -181,15 +174,32 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
     void ReadInput()
     {
-        if (WasJumpPressed())
+        // Input no longer moves the character: the choreography is
+        // predetermined and identical on every playthrough. A press only
+        // scores - inside a cue's window it clears, otherwise the ball
+        // flashes red when the scheduled motion fires anyway.
+        if (WasJumpPressed() || WasDodgePressed())
         {
-            bufferedJumpAt = Time.time;
+            RegisterPress(director.VideoTime);
         }
+    }
 
-        if (WasDodgePressed() && stance == Stance.Grounded)
+    void RegisterPress(float videoTime)
+    {
+        for (int i = 0; i < states.Count; i++)
         {
-            dodgeElapsed = 0f;
-            stance = Stance.Dodging;
+            EventState state = states[i];
+            if (state.Resolved || state.Scored)
+            {
+                continue;
+            }
+
+            float half = Mathf.Max(state.Event.windowSeconds, 0.24f) * 0.5f;
+            if (Mathf.Abs(videoTime - state.Event.time) <= half)
+            {
+                state.Scored = true;
+                return;
+            }
         }
     }
 
@@ -249,21 +259,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             return;
         }
 
-        bool jumpQueued = bufferedJumpAt >= 0f && Time.time - bufferedJumpAt <= inputBuffer;
-
-        if (stance == Stance.Grounded && jumpQueued)
-        {
-            activeJumpHeight = HeightForJump();
-
-            // A symmetric arc of the chosen height and duration:
-            //   v0 = 4h / t, g = 8h / t^2
-            verticalVelocity = 4f * activeJumpHeight / Mathf.Max(ArcDuration(), 0.01f);
-            airHeight = 0.0001f;
-            stance = Stance.Airborne;
-            bufferedJumpAt = -1f;
-            return;
-        }
-
+        // Arcs are started by the schedule (StartScheduledJump), never by input.
         if (stance != Stance.Airborne)
         {
             return;
@@ -285,6 +281,8 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
     void UpdateEvents(float distance, bool hidden)
     {
+        float videoTime = director.VideoTime;
+
         for (int i = 0; i < states.Count; i++)
         {
             EventState state = states[i];
@@ -293,29 +291,32 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                 continue;
             }
 
-            float half = Mathf.Max(state.Event.windowDistance, 0.01f);
-            bool inside = Mathf.Abs(distance - state.Event.distance) <= half;
-
-            if (inside)
+            // The choreography fires at exactly the written time, every
+            // playthrough, whatever the player does.
+            if (!state.Started && videoTime >= state.Event.time)
             {
-                state.Entered = true;
-                if (Satisfies(state.Type))
+                state.Started = true;
+                if (state.Type == VideoLevelEventType.Dodge)
                 {
-                    state.Satisfied = true;
+                    dodgeElapsed = 0f;
+                    stance = Stance.Dodging;
                 }
-
-                continue;
+                else
+                {
+                    StartScheduledJump(state.Event);
+                }
             }
 
-            // Only resolve once the window is behind us, so a cue cleared at any
-            // point inside its window still counts.
-            if (!state.Entered || distance <= state.Event.distance)
+            // Score once the window has fully passed, so a slightly-late press
+            // still counts.
+            float half = Mathf.Max(state.Event.windowSeconds, 0.24f) * 0.5f;
+            if (!state.Started || videoTime <= state.Event.time + half)
             {
                 continue;
             }
 
             state.Resolved = true;
-            bool success = state.Satisfied || hidden;
+            bool success = state.Scored || hidden;
             if (success)
             {
                 cleared++;
@@ -323,11 +324,28 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             else
             {
                 missed++;
+                // The miss is shown on the ball itself: it flashes red while
+                // the scheduled motion carries on regardless.
+                view?.Flash(0.6f);
             }
 
             lastOutcome = $"{(success ? "CLEAR" : "MISS")}  {state.Event.label}";
             EventResolved?.Invoke(state.Event, success);
         }
+    }
+
+    void StartScheduledJump(VideoLevelEvent cue)
+    {
+        // A jump interrupts whatever the ball was doing; the schedule owns it.
+        dodgeElapsed = -1f;
+        activeJumpHeight = Mathf.Clamp(
+            cue.height > 0f ? cue.height : jumpHeight,
+            jumpHeightRange.x,
+            jumpHeightRange.y);
+        activeAirTime = cue.airTime;
+        verticalVelocity = 4f * activeJumpHeight / Mathf.Max(ArcDuration(), 0.01f);
+        airHeight = 0.0001f;
+        stance = Stance.Airborne;
     }
 
     /// <summary>Take-off speed of the jump in progress, for normalizing stretch.</summary>
@@ -351,55 +369,15 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         // sqrt rule knows nothing about.
         if (activeAirTime > 0f)
         {
-            return Mathf.Clamp(activeAirTime, 0.6f, 3.4f);
+            // Floor at 0.3s: the annotated bush hops are 0.4s and the chain hop
+            // 0.34s, and a higher floor silently doubled them.
+            return Mathf.Clamp(activeAirTime, 0.3f, 3.4f);
         }
 
         return airTime * Mathf.Sqrt(
             Mathf.Max(activeJumpHeight, 0.01f) / Mathf.Max(jumpHeight, 0.01f));
     }
 
-    /// <summary>
-    /// How high this jump should go, taken from the cue it is aimed at.
-    /// </summary>
-    /// <remarks>
-    /// Heights come from the tracked marker, so a jump the designer drew small
-    /// stays small. Without this every jump used one tuned constant and the
-    /// drawn variation was lost.
-    /// </remarks>
-    float HeightForJump()
-    {
-        float distance = director.Distance;
-        float best = jumpHeight;
-        float bestGap = float.MaxValue;
-        activeAirTime = 0f;
-
-        for (int i = 0; i < states.Count; i++)
-        {
-            EventState state = states[i];
-            if (state.Resolved || state.Event.height <= 0f)
-            {
-                continue;
-            }
-
-            float gap = state.Event.distance - distance;
-            if (gap < -state.Event.windowDistance || gap > cueLookahead * state.Event.windowDistance * 4f)
-            {
-                continue;
-            }
-
-            if (Mathf.Abs(gap) < bestGap)
-            {
-                bestGap = Mathf.Abs(gap);
-                best = state.Event.height;
-                // The cue's own air time, sized offline so the arc outlasts the
-                // obstacle's crossing; without it the ball landed on cars that
-                // were still under it.
-                activeAirTime = state.Event.airTime;
-            }
-        }
-
-        return Mathf.Clamp(best, jumpHeightRange.x, jumpHeightRange.y);
-    }
 
     bool Satisfies(VideoLevelEventType type)
     {
@@ -467,6 +445,20 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
         transform.position = groundPosition;
 
+        // Pass behind annotated foreground poles: a strip of the video is
+        // re-drawn in front of the ball wherever the level says so.
+        if (background != null)
+        {
+            if (director.Level.TryGetForeground(distance, out Rect strip))
+            {
+                background.ShowForeground(strip);
+            }
+            else
+            {
+                background.HideForeground();
+            }
+        }
+
         if (view != null)
         {
             view.Apply(
@@ -498,7 +490,6 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         airHeight = 0f;
         verticalVelocity = 0f;
         dodgeElapsed = -1f;
-        bufferedJumpAt = -1f;
         stance = Stance.Grounded;
         lastOutcome = string.Empty;
         smoothedGround = -1f;

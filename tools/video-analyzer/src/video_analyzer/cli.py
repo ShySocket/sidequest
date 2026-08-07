@@ -587,7 +587,9 @@ def _command_audit(args: argparse.Namespace) -> int:
         Path(args.ledges).expanduser().resolve(),
         Path(args.detections).expanduser().resolve(),
     )
-    result = auditor.run()
+    result = auditor.run(
+        Path(args.timeline).expanduser().resolve() if args.timeline else None
+    )
 
     print(f"frames audited       {result.frames}")
     if result.frames:
@@ -725,6 +727,7 @@ def main(argv: list[str] | None = None) -> int:
     audit_parser.add_argument("--surfaces", default="out/IMG_3775.surfaces.npz")
     audit_parser.add_argument("--ledges", default="out/IMG_3775.ledges.npz")
     audit_parser.add_argument("--detections", default="out/IMG_3775.detections.json")
+    audit_parser.add_argument("--timeline", default="timeline.json")
     audit_parser.set_defaults(func=_command_audit)
 
     args = parser.parse_args(argv)

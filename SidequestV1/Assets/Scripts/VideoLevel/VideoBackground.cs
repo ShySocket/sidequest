@@ -38,6 +38,8 @@ public sealed class VideoBackground : MonoBehaviour
     RenderTexture texture;
     Transform quad;
     Material material;
+    Transform foregroundQuad;
+    Material foregroundMaterial;
     float halfWidth;
     float halfHeight;
     int laidOutWidth;
@@ -232,6 +234,69 @@ public sealed class VideoBackground : MonoBehaviour
             0f);
     }
 
+    /// <summary>
+    /// Re-draw a strip of the video in front of everything at z &lt; 0.
+    /// </summary>
+    /// <remarks>
+    /// The strip shows exactly the pixels already behind it, so its only
+    /// visible effect is occluding the ball - which is how the ball passes
+    /// *behind* a pole without any runtime segmentation. ``strip`` is in
+    /// video-frame coordinates, (0,0) top-left.
+    /// </remarks>
+    public void ShowForeground(Rect strip)
+    {
+        if (texture == null)
+        {
+            return;
+        }
+
+        if (foregroundQuad == null)
+        {
+            GameObject created = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            created.name = "VideoForegroundStrip";
+            Destroy(created.GetComponent<Collider>());
+            foregroundQuad = created.transform;
+            foregroundQuad.SetParent(
+                targetCamera != null ? targetCamera.transform : transform, false);
+
+            var renderer = created.GetComponent<MeshRenderer>();
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+            foregroundMaterial = new Material(ResolveShader());
+            foregroundMaterial.mainTexture = texture;
+            if (foregroundMaterial.HasProperty("_BaseMap"))
+            {
+                foregroundMaterial.SetTexture("_BaseMap", texture);
+            }
+            renderer.sharedMaterial = foregroundMaterial;
+        }
+
+        foregroundQuad.gameObject.SetActive(true);
+
+        float width = strip.width * halfWidth * 2f;
+        float height = strip.height * halfHeight * 2f;
+        float centreX = (strip.center.x - 0.5f) * halfWidth * 2f;
+        float centreY = (0.5f - strip.center.y) * halfHeight * 2f;
+
+        // A few units in front of the camera: nearer than the ball (world z=0),
+        // far enough to clear the near plane. Depth does not change apparent
+        // size under this orthographic camera, so the mapping stays exact.
+        foregroundQuad.localPosition = new Vector3(centreX, centreY, 5f);
+        foregroundQuad.localScale = new Vector3(width, height, 1f);
+
+        // The video texture's v axis runs bottom-up; frame coordinates top-down.
+        foregroundMaterial.mainTextureScale = new Vector2(strip.width, strip.height);
+        foregroundMaterial.mainTextureOffset = new Vector2(strip.xMin, 1f - strip.yMax);
+    }
+
+    public void HideForeground()
+    {
+        if (foregroundQuad != null)
+        {
+            foregroundQuad.gameObject.SetActive(false);
+        }
+    }
+
     /// <summary>World units per unit of normalized frame height. Used to size the character.</summary>
     public float FrameHeightInWorld => halfHeight * 2f;
 
@@ -248,6 +313,11 @@ public sealed class VideoBackground : MonoBehaviour
         if (material != null)
         {
             Destroy(material);
+        }
+
+        if (foregroundMaterial != null)
+        {
+            Destroy(foregroundMaterial);
         }
     }
 }

@@ -105,18 +105,30 @@ public sealed class VideoRunnerBallView : MonoBehaviour
     // frame is pure garbage for the collector to chase.
     MaterialPropertyBlock shadowProperties;
     static readonly int OpacityId = Shader.PropertyToID("_Opacity");
+    static readonly int BaseColorId = Shader.PropertyToID("_BaseColor");
     static readonly int LightColorId = Shader.PropertyToID("_LightColor");
     static readonly int SkyColorId = Shader.PropertyToID("_SkyColor");
     static readonly int GroundColorId = Shader.PropertyToID("_GroundColor");
     static readonly int SpecStrengthId = Shader.PropertyToID("_SpecStrength");
 
+    float flashUntil = -1f;
+    float flashDuration = 1f;
+
     Color appliedAmbient = Color.clear;
     float appliedLuma = -1f;
+    Color baseBase;
     Color baseLight;
     Color baseSky;
     Color baseGround;
     float baseSpecStrength;
     float shadowLightScale = 1f;
+
+    /// <summary>Flash the ball red: the visible verdict for a missed cue.</summary>
+    public void Flash(float duration)
+    {
+        flashDuration = Mathf.Max(duration, 0.05f);
+        flashUntil = Time.time + flashDuration;
+    }
 
     public void Apply(in Pose pose, float deltaTime)
     {
@@ -177,8 +189,20 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         }
 
         Color ambient = pose.Ambient.a > 0f ? pose.Ambient : Color.white;
+
+        // The miss flash pulls the light toward red, and - because a black
+        // albedo reflects almost nothing whatever colour the light is - the
+        // albedo itself as well. Specular and rim stay alive, so it reads as
+        // the ball burning red rather than being swapped for a red one.
+        float flash = Mathf.Clamp01((flashUntil - Time.time) / flashDuration);
+        if (flash > 0f)
+        {
+            ambient = Color.Lerp(ambient, new Color(2.2f, 0.25f, 0.2f), flash * 0.85f);
+        }
+
         float luma = ambient.r * 0.299f + ambient.g * 0.587f + ambient.b * 0.114f;
-        if (Mathf.Abs(luma - appliedLuma) < 0.02f
+        if (flash <= 0f
+            && Mathf.Abs(luma - appliedLuma) < 0.02f
             && Mathf.Abs(ambient.r - appliedAmbient.r) < 0.02f
             && Mathf.Abs(ambient.b - appliedAmbient.b) < 0.02f)
         {
@@ -193,12 +217,15 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         Material material = ballRenderer.material;
         if (baseLight.a == 0f)
         {
+            baseBase = material.GetColor(BaseColorId);
             baseLight = material.GetColor(LightColorId);
             baseSky = material.GetColor(SkyColorId);
             baseGround = material.GetColor(GroundColorId);
             baseSpecStrength = material.GetFloat(SpecStrengthId);
         }
 
+        material.SetColor(
+            BaseColorId, Color.Lerp(baseBase, new Color(0.8f, 0.04f, 0.03f), flash));
         material.SetColor(LightColorId, baseLight * ambient);
         material.SetColor(SkyColorId, baseSky * ambient);
         material.SetColor(GroundColorId, baseGround * ambient);

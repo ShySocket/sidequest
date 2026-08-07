@@ -201,6 +201,42 @@ public sealed class VideoLevel
         return point.x > 0f ? point.x : data.characterColumn;
     }
 
+    /// <summary>Foreground strip (pole) the ball currently passes behind, if any.</summary>
+    /// <remarks>
+    /// Samples come from detections every few frames; nearest-sample lookup with
+    /// a small tolerance, because interpolating between two different poles
+    /// would sweep the strip across the screen.
+    /// </remarks>
+    public bool TryGetForeground(float distance, out Rect box)
+    {
+        box = default;
+        if (data.foreground == null || data.foreground.Count == 0)
+        {
+            return false;
+        }
+
+        int best = -1;
+        float bestGap = TotalDistance > 0f ? TotalDistance * 0.006f : 250f;
+        for (int i = 0; i < data.foreground.Count; i++)
+        {
+            float gap = Mathf.Abs(data.foreground[i].d - distance);
+            if (gap < bestGap)
+            {
+                bestGap = gap;
+                best = i;
+            }
+        }
+
+        if (best < 0)
+        {
+            return false;
+        }
+
+        VideoLevelForegroundBox sample = data.foreground[best];
+        box = Rect.MinMaxRect(sample.x1, sample.y1, sample.x2, sample.y2);
+        return true;
+    }
+
     /// <summary>Light the footage casts where the character stands, ~white in ordinary daylight.</summary>
     public Color AmbientAtDistance(float distance)
     {

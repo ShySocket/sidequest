@@ -3,6 +3,13 @@
 A playable runner over the prerecorded clip. The character stands at a fixed
 column of the screen, the video scrolls past, and cues arrive at authored moments.
 
+**The choreography is authoritative.** Every jump and dodge is predetermined and
+identical on every playthrough: at each event's authored time the motion happens,
+whether or not the player pressed anything. Input only *scores* — a press inside
+the event's window clears it; a miss flashes the ball red and the arc plays out
+anyway. This keeps the motion exactly what was audited frame by frame, while the
+game stays a game.
+
 Separate from `RunnerPrototype`, which is untouched.
 
 ## Run it
@@ -33,8 +40,7 @@ re-running it is always a safe way back to a working scene.
 
 | Input | Action |
 |---|---|
-| Space / click / tap | Jump |
-| Down arrow, S, or Left Shift | Dodge (step aside) |
+| Space / click / tap | Score the nearest open cue (jump or dodge) |
 | R | Restart |
 | `-` / `=` | Playback speed |
 | Left / Right arrow | Scrub 5s |
@@ -207,12 +213,22 @@ moves. A `Rigidbody2D` resting on a collider that teleports every frame behaves
 badly; integrating a jump arc above a moving ground line is simpler and exactly
 reproducible, which matters when cues are authored to specific moments.
 
-**A miss does not end the run.** The point of this build is evaluating the
-timeline, and dying at 11s repeatedly would make that harder. Misses are counted
-and shown instead.
+**A miss does not end the run.** The motion is authoritative, so a missed press
+cannot desynchronize anything: the ball flashes red (the albedo itself is pulled
+toward red — a black ball reflects almost nothing, so tinting only the light was
+invisible), the miss is counted, and the choreographed arc happens regardless.
 
-**A cue counts if it is satisfied anywhere inside its window**, not only at the
-exact instant — with a short input buffer so a slightly early tap still lands.
+**Windows and warning leads are derived, not hand-tuned.** At authoring time
+each event's scoring window is `clamp(0.8 × the smaller neighbouring gap, 0.24,
+0.7)` seconds and its HUD warning lead is `clamp(0.7 × the gap before it, 0.35,
+0.55)` — so an isolated jump is forgiving with an early warning, while the tight
+hedge chain at 25.88/26.30 gets correspondingly tight windows. Both ship in the
+level file per event (`windowSeconds`, `lead`).
+
+**The ball passes behind foreground poles.** The level carries the detection
+boxes of poles the ball's column crosses during marked spans; the game re-draws
+that strip of the video in front of the ball. The pixels are identical to the
+background, so the only visible effect is the ball sliding behind the pole.
 
 ## Playback modes
 
@@ -271,14 +287,17 @@ gate. Three guarantees, currently all clean at 99.7% measurable support:
 
 - **Support** — a grounded ball rests on the named surface's measured line, or
   inside the segmented ground region. No mid-air look.
-- **Clearance** — a jump tapped anywhere in its cue window keeps the ball high
-  while its obstacle crosses the column. Cue times are the drawn arc *starts*
-  (a tap is a takeoff), each cue carries its drawn air time (a van takes longer
-  to cross than a sqrt-of-height arc stays up), and window sizes are *fitted*
-  per obstacle from the detections rather than guessed.
+- **Clearance** — each scheduled arc (takeoff at the authored time, the authored
+  air time, a lift-based clearance test) keeps the ball high while its obstacle
+  crosses the column. Only the obstacle *owning* the arc is checked (within
+  0.55 s of the peak), and the first and last 0.12 s are exempt — "land right
+  after the car" is the authored intent, not a violation.
 - **Dodge** — each dodge cue has a real sign crossing the column, and the dodge
   is a visible lane change: a step toward the camera, the ball growing as it
   nears, passing in front of the sign.
+- **Script conformance** — the emitted level's events match `timeline.json`
+  verbatim (time, height, air time within 0.005), so nothing between the design
+  and the shipped file can silently drift.
 
 Strict box-disjointness is deliberately not the clearance criterion: a parked
 SUV's box towers over any jump and even the designer's drawn arc passes inside

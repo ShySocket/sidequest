@@ -43,6 +43,7 @@ public class VideoLevelData
     public List<VideoLevelEvent> events = new List<VideoLevelEvent>();
     public List<VideoLevelHiddenSpan> hidden = new List<VideoLevelHiddenSpan>();
     public List<VideoLevelAmbientPoint> ambient = new List<VideoLevelAmbientPoint>();
+    public List<VideoLevelForegroundBox> foreground = new List<VideoLevelForegroundBox>();
 }
 
 [Serializable]
@@ -95,6 +96,22 @@ public class VideoLevelSpeedPoint
 /// tuned material colours by this, so ordinary daylight leaves them unchanged
 /// and shade or glare move them relative to that.
 /// </remarks>
+/// <summary>A strip of the video re-drawn in front of the ball.</summary>
+/// <remarks>
+/// The re-drawn pixels are identical to the background beneath, so the only
+/// visible effect is the ball disappearing behind that strip - which is exactly
+/// what passing behind a pole looks like.
+/// </remarks>
+[Serializable]
+public class VideoLevelForegroundBox
+{
+    public float d;
+    public float x1;
+    public float y1;
+    public float x2;
+    public float y2;
+}
+
 [Serializable]
 public class VideoLevelAmbientPoint
 {
@@ -120,6 +137,12 @@ public class VideoLevelEvent
     /// <summary>Peak height the designer drew for this jump, 0..1 of frame height.</summary>
     /// <remarks>Zero means none was recorded, and the tuned default is used.</remarks>
     public float height;
+
+    /// <summary>Full scoring window in seconds, centred on the takeoff.</summary>
+    public float windowSeconds;
+
+    /// <summary>Seconds before the takeoff that the warning appears.</summary>
+    public float lead;
 
     /// <summary>Seconds of air the designer's drawn arc spans. Zero = derive from height.</summary>
     /// <remarks>

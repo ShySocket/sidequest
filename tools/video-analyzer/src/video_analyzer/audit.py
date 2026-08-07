@@ -148,7 +148,9 @@ class LevelAuditor:
         """
         clamped = float(np.clip(height if height > 0 else DEFAULT_JUMP_HEIGHT, *HEIGHT_CLAMP))
         if air_time > 0:
-            return clamped, float(np.clip(air_time, 0.6, 3.4))
+            # Floor at 0.3s: the annotated bush hops are 0.4s and the chain
+            # hop 0.34s, and a 0.6s floor silently doubled them.
+            return clamped, float(np.clip(air_time, 0.3, 3.4))
         duration = DEFAULT_AIR_TIME * np.sqrt(clamped / DEFAULT_JUMP_HEIGHT)
         return clamped, float(duration)
 
@@ -376,90 +378,119 @@ class LevelAuditor:
         return violations
 
     def check_clearance(self) -> list[Violation]:
-        """Any tap inside the window must clear the obstacle untouched."""
+        """The scheduled arc must clear its obstacle.
+
+        Jumps are predetermined choreography now - the arc fires at exactly the
+        written time on every playthrough, and input only scores - so there is
+        no tap family to audit. One arc, one verdict.
+        """
         violations = []
         for event in self.level["events"]:
             if event["type"] != "jump":
                 continue
 
             height, duration = self.arc(event.get("height", 0.0), event.get("airTime", 0.0))
-            window_d = event.get("windowDistance", 0.0)
-            window_t = float(
-                np.interp(event["distance"] + window_d, self.map_d, self.map_t)
-                - event["time"]
-            )
+            takeoff = float(event["time"])
+            peak_time = takeoff + duration * 0.5
 
             worst_gap = np.inf
             worst_detail = ""
-            # Tap = takeoff, exactly as the game fires it. Any tap that keeps
-            # the ball airborne through the cue window satisfies the cue, so the
-            # clearance guarantee is checked across that whole family: the
-            # earliest sensible tap, the centred one, and the latest.
-            # The cue marks the takeoff, so taps are audited across the cue
-            # window itself: earliest accepted, centred, latest accepted.
-            taps = (
-                event["time"] - window_t,
-                event["time"],
-                event["time"] + window_t,
-            )
-            # The obstacle this cue owns crosses the column around the arc's
-            # drawn peak; boxes outside that belong to neighbouring cues, which
-            # audit their own arcs.
-            peak_time = event["time"] + duration * 0.5
-            for takeoff in taps:
+            for step in np.arange(0.0, duration, 1.0 / FPS):
+                time = takeoff + step
+                # Ownership: the arc answers for what crosses under it. A pole
+                # most of a second from the apex is a different object.
+                if abs(time - peak_time) > 0.55:
+                    continue
+                # The takeoff and landing instants carry no lift by definition,
+                # and several landings are annotated as "right after the car" -
+                # grazing the box tail at touchdown is the intent, not a hit.
+                if step < 0.12 or step > duration - 0.12:
+                    continue
+                distance = self.distance_at(time)
+                ground = self.ground_at(distance)
+                column = self.column_at(distance)
+                radius = self.diameter_at(distance) * 0.5
+                lift = self.air_height(height, duration, step)
 
-                for step in np.arange(0.0, duration, 1.0 / FPS):
-                    time = takeoff + step
-                    # Tighter ownership: the cue owns what crosses under its
-                    # drawn apex. A pole most of a second away is a different
-                    # object, not this jump's obstacle.
-                    if abs(time - peak_time) > 0.55:
+                for box in self.obstacle_boxes(time):
+                    if box["x2"] < column - radius or box["x1"] > column + radius:
                         continue
-                    distance = self.distance_at(time)
-                    ground = self.ground_at(distance)
-                    column = self.column_at(distance)
-                    radius = self.diameter_at(distance) * 0.5
-                    lift = self.air_height(height, duration, step)
-
-                    for box in self.obstacle_boxes(time):
-                        if box["x2"] < column - radius or box["x1"] > column + radius:
-                            continue
-                        # Only obstacles standing at the ball's ground level;
-                        # background boxes are not in its path.
-                        if abs(box["y2"] - ground) > 0.18:
-                            continue
-                        # Strict box-disjointness is deliberately not the test:
-                        # a parked SUV's box towers over any jump, and even the
-                        # designer's drawn arc passes inside it. What reads as a
-                        # vault is the ball being airborne and high while the
-                        # obstacle crosses - so require real height, over half
-                        # the obstacle's own, capped by what the arc delivers.
-                        # A thin pole flicking past needs far less height than
-                        # a van taking a second to cross; scale the requirement
-                        # by obstacle width so skinny things do not demand
-                        # car-sized vaults.
-                        obstacle_height = max(ground - box["y1"], 0.0)
-                        width_factor = float(np.clip((box["x2"] - box["x1"]) / 0.06, 0.45, 1.0))
-                        required = min(0.45 * obstacle_height, 0.85 * height) * width_factor
-                        gap = lift - required
-                        if gap < worst_gap:
-                            worst_gap = gap
-                            worst_detail = (
-                                f"{event['label']} vs {box['label']}: lift {lift:.3f} "
-                                f"of {required:.3f} needed "
-                                f"(takeoff {takeoff:.2f}s, t={time:.2f}s)"
-                            )
+                    # Only obstacles standing at the ball's ground level. The
+                    # test is "reaches down to the ground", not "bottom near
+                    # the ground": a near van's box runs past the frame bottom,
+                    # and the old symmetric check filtered it out entirely.
+                    if box["y2"] < ground - 0.18:
+                        continue
+                    # Strict box-disjointness is deliberately not the test: a
+                    # parked SUV's box towers over any jump, and even the
+                    # designer's drawn arc passes inside it. A vault reads from
+                    # being airborne and high while the obstacle crosses, with
+                    # thin poles scaled down so they do not demand car-sized
+                    # clearance.
+                    obstacle_height = max(ground - box["y1"], 0.0)
+                    width_factor = float(np.clip((box["x2"] - box["x1"]) / 0.06, 0.45, 1.0))
+                    required = min(0.45 * obstacle_height, 0.85 * height) * width_factor
+                    gap = lift - required
+                    if gap < worst_gap:
+                        worst_gap = gap
+                        worst_detail = (
+                            f"{event['label']} vs {box['label']}: lift {lift:.3f} "
+                            f"of {required:.3f} needed (t={time:.2f}s)"
+                        )
 
             if worst_gap < 0:
                 violations.append(
                     Violation(
                         "clearance",
-                        event["time"] - window_t,
-                        event["time"] + window_t,
+                        takeoff,
+                        takeoff + duration,
                         worst_gap,
                         worst_detail,
                     )
                 )
+        return violations
+
+    def check_script(self, timeline_path: Path | None) -> list[Violation]:
+        """The level must contain the annotated choreography, verbatim.
+
+        Guards the whole point of the deterministic design: every authoring
+        stage downstream of timeline.json (window derivation, sorting, seam
+        logic) must leave the written times, heights and air times untouched.
+        """
+        if timeline_path is None or not timeline_path.exists():
+            return []
+
+        timeline = json.loads(timeline_path.read_text())
+        if not timeline.get("authoritativeEvents"):
+            return []
+
+        violations = []
+        by_time = {round(e["time"], 2): e for e in self.level["events"]}
+        for wanted in timeline.get("events", []):
+            actual = by_time.get(round(float(wanted["time"]), 2))
+            if actual is None:
+                violations.append(
+                    Violation(
+                        "script",
+                        float(wanted["time"]),
+                        float(wanted["time"]),
+                        1.0,
+                        f"annotated {wanted['type']} '{wanted.get('label')}' missing from level",
+                    )
+                )
+                continue
+            for key in ("height", "airTime"):
+                if key in wanted and abs(float(wanted[key]) - float(actual.get(key, 0))) > 0.005:
+                    violations.append(
+                        Violation(
+                            "script",
+                            float(wanted["time"]),
+                            float(wanted["time"]),
+                            abs(float(wanted[key]) - float(actual.get(key, 0))),
+                            f"{wanted.get('label')}: {key} drifted "
+                            f"{wanted[key]} -> {actual.get(key)}",
+                        )
+                    )
         return violations
 
     def check_dodges(self) -> list[Violation]:
@@ -560,12 +591,13 @@ class LevelAuditor:
             )
         return violations
 
-    def run(self) -> AuditResult:
+    def run(self, timeline_path: Path | None = None) -> AuditResult:
         result = AuditResult()
         result.violations += self.check_support()
         result.violations += self.check_clearance()
         result.violations += self.check_dodges()
         result.violations += self.check_size()
+        result.violations += self.check_script(timeline_path)
         result.frames, result.supported_frames = getattr(
             self, "_support_stats", (0, 0)
         )

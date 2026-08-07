@@ -150,13 +150,16 @@ public sealed class VideoRunnerHud : MonoBehaviour
             }
         }
 
-        if (next != null && bestGap <= UpcomingSeconds)
+        // Each cue carries its own warning lead (~0.55s); the old fixed 1.2s
+        // was annotated as arriving way too soon.
+        float lead = next != null && next.lead > 0f ? next.lead : UpcomingSeconds;
+        if (next != null && bestGap <= lead)
         {
             string action = VideoLevelEventTypes.Parse(next.type) == VideoLevelEventType.Dodge
                 ? "DODGE"
                 : "JUMP";
             cueText = $"{action}  ({next.label})";
-            cueAlpha = Mathf.Clamp01(1f - bestGap / UpcomingSeconds);
+            cueAlpha = Mathf.Clamp01(1f - bestGap / lead);
         }
 
         if (Time.unscaledTime - textRefreshedAt < TextRefreshInterval)
