@@ -164,6 +164,81 @@ public class VideoLevelTests
         Assert.That(Sample().PathDepthRange, Is.EqualTo(new Vector2(0.45f, 0.95f)));
     }
 
+    const string ForegroundJson = @"{
+        ""version"": 3,
+        ""source"": { ""file"": ""clip.mov"", ""fps"": 30, ""width"": 1920,
+                      ""height"": 1080, ""duration"": 10 },
+        ""distanceUnits"": ""relative"",
+        ""characterColumn"": 0.35,
+        ""totalDistance"": 100,
+        ""timeToDistance"": [ {""t"":0,""d"":0}, {""t"":10,""d"":100} ],
+        ""path"": [ {""d"":0,""y"":0.5,""s"":""floor""}, {""d"":100,""y"":0.6,""s"":""floor""} ],
+        ""foregroundMaskFile"": ""clip.occluders.png"",
+        ""foreground"": [
+            {""d"":40,""id"":1,""x1"":0.30,""y1"":0.1,""x2"":0.34,""y2"":0.8,
+             ""mask"":1,""u1"":0.0,""v1"":0.75,""u2"":0.0625,""v2"":1.0},
+            {""d"":40.5,""id"":1,""x1"":0.32,""y1"":0.1,""x2"":0.36,""y2"":0.8,
+             ""mask"":1,""u1"":0.0625,""v1"":0.75,""u2"":0.125,""v2"":1.0},
+            {""d"":60,""id"":2,""x1"":0.70,""y1"":0.2,""x2"":0.74,""y2"":0.9}
+        ]
+    }";
+
+    [Test]
+    public void ForegroundInterpolatesWithinOneOccluder()
+    {
+        VideoLevel level = VideoLevel.Parse(ForegroundJson);
+
+        Assert.That(level.TryGetForeground(40.25f, out Rect box, out Rect uv, out bool mask),
+            Is.True);
+        // Halfway between two sightings of the same pole, the strip is halfway.
+        Assert.That(box.xMin, Is.EqualTo(0.31f).Within(1e-3f));
+        Assert.That(box.xMax, Is.EqualTo(0.35f).Within(1e-3f));
+        Assert.That(mask, Is.True);
+        Assert.That(uv.width, Is.GreaterThan(0f));
+    }
+
+    [Test]
+    public void ForegroundNeverSweepsBetweenDifferentOccluders()
+    {
+        VideoLevel level = VideoLevel.Parse(ForegroundJson);
+
+        // Between track 1 (ends d=40.5) and track 2 (starts d=60) there must
+        // be no strip at all - interpolating across would sweep it through
+        // the empty space between two poles.
+        Assert.That(level.TryGetForeground(50f, out _, out _, out _), Is.False);
+    }
+
+    [Test]
+    public void ForegroundDiesImmediatelyPastTheTrackEdge()
+    {
+        VideoLevel level = VideoLevel.Parse(ForegroundJson);
+
+        // Track 1's sample spacing is 0.5, so the last sighting (d=40.5) may
+        // linger half that and no further. A strip lingering longer parks a
+        // stale silhouette where the pole used to be and erases part of the
+        // ball with nothing visibly in front of it.
+        Assert.That(level.TryGetForeground(40.7f, out _, out _, out _), Is.True);
+        Assert.That(level.TryGetForeground(40.8f, out _, out _, out _), Is.False);
+        Assert.That(level.TryGetForeground(39.8f, out _, out _, out _), Is.True);
+        Assert.That(level.TryGetForeground(39.7f, out _, out _, out _), Is.False);
+    }
+
+    [Test]
+    public void ForegroundWithoutSilhouetteFallsBackToTheRectangle()
+    {
+        VideoLevel level = VideoLevel.Parse(ForegroundJson);
+
+        Assert.That(level.TryGetForeground(60f, out Rect box, out _, out bool mask), Is.True);
+        Assert.That(mask, Is.False, "no mask baked for this sample");
+        Assert.That(box.xMin, Is.EqualTo(0.70f).Within(1e-3f));
+    }
+
+    [Test]
+    public void LevelsWithoutForegroundNeverOcclude()
+    {
+        Assert.That(Sample().TryGetForeground(50f, out _, out _, out _), Is.False);
+    }
+
     [Test]
     public void MalformedJsonIsRejectedRatherThanCrashing()
     {
@@ -201,6 +276,13 @@ public class VideoLevelTests
         foreach (VideoLevelEvent entry in level.Events)
         {
             Assert.That(entry.distance, Is.InRange(0f, level.TotalDistance), entry.label);
+            if (VideoLevelEventTypes.Parse(entry.type) == VideoLevelEventType.Hop)
+            {
+                // A hop is uncued choreography: no scoring window by design.
+                Assert.That(entry.windowSeconds, Is.EqualTo(0f), entry.label);
+                continue;
+            }
+
             Assert.That(entry.windowDistance, Is.GreaterThan(0f), entry.label);
         }
 
@@ -209,5 +291,15 @@ public class VideoLevelTests
         {
             Assert.That(level.GroundAtDistance(d), Is.InRange(0f, 1f), $"ground at d={d}");
         }
+
+        // The occlusion track: the analyzer derives it for every clip now, so
+        // a shipped level with none means the derivation silently broke. The
+        // atlas it names has to travel with the level or every silhouette
+        // silently degrades to its rectangle.
+        Assert.That(level.OccluderMaskFileName, Is.Not.Empty,
+            "level has no occluder atlas; the author pass should bake one");
+        Assert.That(
+            File.Exists(Path.Combine(Application.streamingAssetsPath, level.OccluderMaskFileName)),
+            "occluder atlas is not in StreamingAssets; run copy-to-unity.sh");
     }
 }

@@ -142,6 +142,13 @@ public sealed class VideoRunnerHud : MonoBehaviour
         float bestGap = float.MaxValue;
         foreach (VideoLevelEvent entry in director.Level.Events)
         {
+            // Hops are choreography the player never plays; prompting for one
+            // would teach a press that scores nothing.
+            if (VideoLevelEventTypes.Parse(entry.type) == VideoLevelEventType.Hop)
+            {
+                continue;
+            }
+
             float gap = entry.time - director.VideoTime;
             if (gap >= 0f && gap < bestGap)
             {

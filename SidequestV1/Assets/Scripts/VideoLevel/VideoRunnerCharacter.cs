@@ -83,12 +83,14 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     float verticalVelocity;
     float activeJumpHeight;
     float activeAirTime;
+    int scoredEventCount;
 
     float smoothedGround = -1f;
     float groundVelocity;
     float smoothedColumn = -1f;
     float columnVelocity;
     float dodgeElapsed = -1f;
+    float lastVideoTime = -1f;
     int cleared;
     int missed;
     string lastOutcome = string.Empty;
@@ -96,7 +98,9 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     public Stance CurrentStance => stance;
     public int Cleared => cleared;
     public int Missed => missed;
-    public int TotalEvents => states.Count;
+
+    /// <summary>Cues the player is asked to play - hops are choreography only.</summary>
+    public int TotalEvents => scoredEventCount;
     public string LastOutcome => lastOutcome;
 
     /// <summary>Raised with (event, success) as each cue is resolved.</summary>
@@ -150,7 +154,18 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         float distance = director.Distance;
         bool hidden = director.Level.IsHiddenAtDistance(distance);
 
-        UpdateStance(Time.deltaTime, hidden);
+        // Arcs advance in VIDEO time, not wall time. Takeoffs fire at video
+        // moments and landings are authored to video moments, so the arc
+        // between them has to run on the same clock - integrating with
+        // Time.deltaTime made every jump desynchronize from the footage the
+        // moment playback ran at any rate other than 1x (fast-forward, or
+        // the vehicle-speed mode where the video follows the car).
+        float videoDelta = lastVideoTime < 0f
+            ? 0f
+            : Mathf.Clamp(director.VideoTime - lastVideoTime, 0f, 0.25f);
+        lastVideoTime = director.VideoTime;
+
+        UpdateStance(videoDelta, hidden);
         UpdateEvents(distance, hidden);
         UpdateTransform(distance);
     }
@@ -162,13 +177,19 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             return;
         }
 
+        scoredEventCount = 0;
         foreach (VideoLevelEvent entry in director.Level.Events)
         {
+            var type = VideoLevelEventTypes.Parse(entry.type);
             states.Add(new EventState
             {
                 Event = entry,
-                Type = VideoLevelEventTypes.Parse(entry.type)
+                Type = type
             });
+            if (type != VideoLevelEventType.Hop)
+            {
+                scoredEventCount++;
+            }
         }
     }
 
@@ -189,7 +210,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         for (int i = 0; i < states.Count; i++)
         {
             EventState state = states[i];
-            if (state.Resolved || state.Scored)
+            if (state.Resolved || state.Scored || state.Type == VideoLevelEventType.Hop)
             {
                 continue;
             }
@@ -305,6 +326,14 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                 {
                     StartScheduledJump(state.Event);
                 }
+
+                // A hop is pure choreography: nothing to score, nothing to
+                // miss, no red flash, no entry in the tally.
+                if (state.Type == VideoLevelEventType.Hop)
+                {
+                    state.Resolved = true;
+                    continue;
+                }
             }
 
             // Score once the window has fully passed, so a slightly-late press
@@ -338,10 +367,14 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     {
         // A jump interrupts whatever the ball was doing; the schedule owns it.
         dodgeElapsed = -1f;
-        activeJumpHeight = Mathf.Clamp(
-            cue.height > 0f ? cue.height : jumpHeight,
-            jumpHeightRange.x,
-            jumpHeightRange.y);
+        // An authored cue is trusted rather than clamped to the tuned range:
+        // its numbers were audited against the frames (the people at 24s take
+        // more height than any tuned jump), and the tuned range lives in a
+        // saved scene that would silently pin old limits. The wide clamp only
+        // guards against a corrupt level file.
+        activeJumpHeight = cue.height > 0f
+            ? Mathf.Clamp(cue.height, 0.05f, 0.8f)
+            : Mathf.Clamp(jumpHeight, jumpHeightRange.x, jumpHeightRange.y);
         activeAirTime = cue.airTime;
         verticalVelocity = 4f * activeJumpHeight / Mathf.Max(ArcDuration(), 0.01f);
         airHeight = 0.0001f;
@@ -445,15 +478,31 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
         transform.position = groundPosition;
 
-        // Pass behind annotated foreground poles: a strip of the video is
-        // re-drawn in front of the ball wherever the level says so.
+        // Pass behind foreground poles: a strip of the video is re-drawn in
+        // front of the ball wherever the level says so, letting only the
+        // object's silhouette occlude when the level ships one. The strip is
+        // shown ONLY while it can actually cover the ball - it is invisible
+        // against the background by construction, so any imperfection in it
+        // becomes visible exactly when it touches the ball, and the gate
+        // bounds that to moments when something really is in front.
         if (background != null)
         {
-            if (director.Level.TryGetForeground(distance, out Rect strip))
+            bool shown = false;
+            if (director.Level.TryGetForeground(
+                distance, out Rect strip, out Rect maskUv, out bool masked))
             {
-                background.ShowForeground(strip);
+                float ry = diameter * 0.5f / frameHeight;
+                float rx = diameter * 0.5f / background.FrameWidthInWorld;
+                float centreY = groundY - airHeight - ry;
+                shown = strip.xMin <= column + rx && strip.xMax >= column - rx
+                    && strip.yMin <= centreY + ry && strip.yMax >= centreY - ry;
+                if (shown)
+                {
+                    background.ShowForeground(strip, maskUv, masked);
+                }
             }
-            else
+
+            if (!shown)
             {
                 background.HideForeground();
             }
@@ -496,5 +545,6 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         smoothedColumn = -1f;
         groundVelocity = 0f;
         columnVelocity = 0f;
+        lastVideoTime = -1f;
     }
 }

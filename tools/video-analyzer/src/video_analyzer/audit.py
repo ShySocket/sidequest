@@ -88,8 +88,14 @@ class LevelAuditor:
         surfaces_path: Path,
         ledges_path: Path,
         detections_path: Path,
+        video_path: Path | None = None,
     ) -> None:
         self.level = json.loads(level_path.read_text())
+        self.level_dir = level_path.parent
+        self.video_path = video_path
+        self._silhouette_cache: dict = {}
+        self._capture = None
+        self._masker = None
 
         self.map_t = np.array([p["t"] for p in self.level["timeToDistance"]])
         self.map_d = np.array([p["d"] for p in self.level["timeToDistance"]])
@@ -146,11 +152,16 @@ class LevelAuditor:
         Events carrying the marker's own measured air time use it; the sqrt rule
         is the fallback for hand-typed cues.
         """
-        clamped = float(np.clip(height if height > 0 else DEFAULT_JUMP_HEIGHT, *HEIGHT_CLAMP))
         if air_time > 0:
+            # An authored cue is trusted rather than re-clamped to the tuned
+            # range: the people at 24s are nearly frame-tall and clearing them
+            # takes more height than any tuned jump - the no-overlap check is
+            # what polices these numbers, not a clamp.
+            clamped = float(np.clip(height if height > 0 else DEFAULT_JUMP_HEIGHT, 0.05, 0.8))
             # Floor at 0.3s: the annotated bush hops are 0.4s and the chain
             # hop 0.34s, and a 0.6s floor silently doubled them.
             return clamped, float(np.clip(air_time, 0.3, 3.4))
+        clamped = float(np.clip(height if height > 0 else DEFAULT_JUMP_HEIGHT, *HEIGHT_CLAMP))
         duration = DEFAULT_AIR_TIME * np.sqrt(clamped / DEFAULT_JUMP_HEIGHT)
         return clamped, float(duration)
 
@@ -288,7 +299,7 @@ class LevelAuditor:
                     (event["time"] - DODGE_DURATION, event["time"] + DODGE_DURATION)
                 )
                 continue
-            if event["type"] not in ("jump", "platform"):
+            if event["type"] not in ("jump", "platform", "hop"):
                 continue
             height, duration = self.arc(event.get("height", 0.0), event.get("airTime", 0.0))
             jump_spans.append((event["time"] - duration * 0.7, event["time"] + duration * 0.7))
@@ -450,6 +461,182 @@ class LevelAuditor:
                 )
         return violations
 
+    # What an event's label says it clears, mapped to detection classes. The
+    # overlap rule polices exactly the named obstacle: a lamp pole standing
+    # BEHIND the hedge shares a box base with the signs planted ON it, and no
+    # geometry can tell those apart - but the choreography names its target.
+    OVERLAP_CLASSES = (
+        ("sign", {"traffic sign"}),
+        ("people", {"person"}),
+        ("chain", {"chain", "fence"}),
+        ("fence", {"chain", "fence"}),
+        ("car", {"car", "truck", "bus"}),
+        ("van", {"car", "truck", "bus"}),
+        ("suv", {"car", "truck", "bus"}),
+    )
+
+    def check_overlap(self, timeline_path: Path | None) -> list[Violation]:
+        """No frame of an arc may show the ball overlapping what it clears.
+
+        The clearance check asks "is the vault high enough to read"; this one
+        asks the harder question the frame-by-frame review asked: does the
+        ball's disk ever intersect its obstacle, at takeoff, in flight, or on
+        landing. "Jumping over" means never touching - a landing that grazes
+        the roof is a landing on the roof.
+
+        A detection BOX overstates the object - its corners are empty pixels
+        around a car's sloped tail - so a box hit is a candidate, not a
+        verdict: each one is confirmed against the object's actual SAM
+        silhouette from the frame itself (the picture analysis the review was
+        done with) when the video is available.
+
+        Two kinds of overlap are intended, not collisions, and are exempt:
+
+        * The ball IN FRONT of the obstacle - its resting line clearly below
+          the box base means it is nearer the camera ("lands right in front
+          of the car" is authored intent).
+        * The ball BEHIND a shipped occluder - a strip of video is re-drawn
+          over it there, so overlap is exactly what the design wants.
+        """
+        forced: list[tuple[float, float]] = []
+        if timeline_path is not None and timeline_path.exists():
+            timeline = json.loads(timeline_path.read_text())
+            forced = [
+                (float(s["from"]), float(s["to"]))
+                for s in timeline.get("behindSpans", [])
+            ]
+
+        strips = self.level.get("foreground", [])
+        aspect = self.level["source"]["width"] / self.level["source"]["height"]
+
+        violations = []
+        for event in self.level["events"]:
+            if event["type"] not in ("jump", "hop"):
+                continue
+
+            classes: set[str] | None = None
+            label = str(event.get("label", "")).lower()
+            for keyword, mapped in self.OVERLAP_CLASSES:
+                if keyword in label:
+                    classes = (classes or set()) | mapped
+
+            height, duration = self.arc(event.get("height", 0.0), event.get("airTime", 0.0))
+            takeoff = float(event["time"])
+
+            worst = 0.0
+            worst_detail = ""
+            for step in np.arange(0.0, duration + 1e-6, 1.0 / FPS):
+                time = takeoff + step
+                distance = self.distance_at(time)
+                ground = self.ground_at(distance)
+                column = self.column_at(distance)
+                # Slightly under the drawn radius: the shading rolls off at
+                # the rim, so a mathematical tangency does not read as touch.
+                ry = self.diameter_at(distance) * 0.5 * 0.85
+                rx = ry / aspect
+                lift = self.air_height(height, duration, step)
+                cy = ground - lift - self.diameter_at(distance) * 0.5
+
+                for box in self.obstacle_boxes(time, classes):
+                    # Standing farther than the ball: painted background.
+                    if box["y2"] < ground - 0.18:
+                        continue
+                    # The ball in front of it: nearer the camera, no contact.
+                    if ground > box["y2"] + 0.03:
+                        continue
+                    # Behind a shipped occluder: overlap is the design.
+                    if any(a <= time <= b for a, b in forced) or self._is_occluded(
+                        distance, box, strips
+                    ):
+                        continue
+
+                    nx = float(np.clip(column, box["x1"], box["x2"]))
+                    ny = float(np.clip(cy, box["y1"], box["y2"]))
+                    gap = float(np.hypot((column - nx) / rx, (cy - ny) / ry)) - 1.0
+                    if gap >= 0:
+                        continue
+                    # The frame itself has the last word.
+                    if not self._silhouette_hit(time, box, column, cy, rx, ry):
+                        continue
+                    if -gap > worst:
+                        worst = -gap
+                        worst_detail = (
+                            f"{event['label']} intersects {box['label']} at "
+                            f"t={time:.2f}s (lift {lift:.2f}, box top {box['y1']:.2f})"
+                        )
+
+            if worst > 0.0:
+                violations.append(
+                    Violation(
+                        "overlap",
+                        takeoff,
+                        takeoff + duration,
+                        worst,
+                        worst_detail,
+                    )
+                )
+        return violations
+
+    def _silhouette_hit(
+        self, time: float, box: dict, cx: float, cy: float, rx: float, ry: float
+    ) -> bool:
+        """Does the ball disk cover actual object pixels, per SAM?
+
+        Box corners are empty - a hatchback's sloped tail leaves its box's
+        top-left vacant - and most flagged frames are exactly such corner
+        grazes. Segmenting the frame answers with the object's real outline.
+        Without a video to read (``--video`` not passed), the box verdict
+        stands, erring toward flagging.
+        """
+        if self.video_path is None:
+            return True
+
+        import cv2
+
+        key = (round(time, 2), round(box["x1"], 3), round(box["y1"], 3))
+        if key in self._silhouette_cache:
+            mask = self._silhouette_cache[key]
+        else:
+            if self._capture is None:
+                self._capture = cv2.VideoCapture(str(self.video_path))
+            fps = self._capture.get(cv2.CAP_PROP_FPS) or FPS
+            self._capture.set(cv2.CAP_PROP_POS_FRAMES, int(round(time * fps)))
+            ok, image = self._capture.read()
+            if not ok:
+                return True
+            if self._masker is None:
+                from .occlude import SilhouetteMasker
+
+                self._masker = SilhouetteMasker()
+            h, w = image.shape[:2]
+            mask = self._masker.mask(
+                image,
+                [box["x1"] * w, box["y1"] * h, box["x2"] * w, box["y2"] * h],
+            )
+            self._silhouette_cache[key] = mask
+
+        h, w = mask.shape[:2]
+        for dx in np.linspace(-1, 1, 13):
+            for dy in np.linspace(-1, 1, 13):
+                if dx * dx + dy * dy > 1.0:
+                    continue
+                px = int((cx + dx * rx) * w)
+                py = int((cy + dy * ry) * h)
+                if 0 <= px < w and 0 <= py < h and mask[py, px]:
+                    return True
+        return False
+
+    def _is_occluded(self, distance: float, box: dict, strips: list[dict]) -> bool:
+        """Does a shipped foreground strip cover this box here?"""
+        tolerance = float(self.level["totalDistance"]) * 0.012
+        centre = 0.5 * (box["x1"] + box["x2"])
+        for strip in strips:
+            if abs(float(strip["d"]) - distance) > tolerance:
+                continue
+            if strip["x1"] - 0.03 <= centre <= strip["x2"] + 0.03:
+                return True
+        return False
+
     def check_script(self, timeline_path: Path | None) -> list[Violation]:
         """The level must contain the annotated choreography, verbatim.
 
@@ -549,7 +736,7 @@ class LevelAuditor:
         # ramp under the arc, not a pop - so jump spans are not policed either.
         arcs = []
         for event in self.level["events"]:
-            if event["type"] in ("jump", "platform"):
+            if event["type"] in ("jump", "platform", "hop"):
                 _, dur = self.arc(event.get("height", 0.0), event.get("airTime", 0.0))
                 arcs.append((event["time"] - dur * 0.7, event["time"] + dur * 1.2))
         times = np.array(
@@ -591,13 +778,154 @@ class LevelAuditor:
             )
         return violations
 
+    def check_occlusion(self, timeline_path: Path | None) -> list[Violation]:
+        """Every occluder the level ships must be earned by the footage.
+
+        The derivation in occlude.py is re-checked here from the level file
+        outward, the same way support is: each sample must name a box near the
+        ball's column whose base sits clearly below the segmented ground plane
+        (nearer the camera), tracks must be coherent rather than flicker, and
+        a sample during a dodge or a hidden span would fight choreography the
+        rest of the game is committed to. behindSpans in the timeline exempt
+        exactly what they force.
+        """
+        from .occlude import DEPTH_MARGIN, MAX_CENTER_STEP, REACH
+
+        entries = self.level.get("foreground", [])
+        if not entries:
+            return []
+
+        forced: list[tuple[float, float]] = []
+        if timeline_path is not None and timeline_path.exists():
+            timeline = json.loads(timeline_path.read_text())
+            forced = [
+                (float(s["from"]), float(s["to"]))
+                for s in timeline.get("behindSpans", [])
+            ]
+
+        hidden = [(h["startTime"], h["endTime"]) for h in self.level.get("hidden", [])]
+        dodges = [
+            (e["time"] - 0.25, e["time"] + 1.0)
+            for e in self.level["events"]
+            if e["type"] == "dodge"
+        ]
+        mask_file = self.level.get("foregroundMaskFile", "")
+
+        violations = []
+        tracks: dict[int, list[dict]] = {}
+        for entry in entries:
+            tracks.setdefault(int(entry.get("id", 0)), []).append(entry)
+
+        for track_id, samples in sorted(tracks.items()):
+            samples.sort(key=lambda e: e["d"])
+            times = [float(np.interp(s["d"], self.map_d, self.map_t)) for s in samples]
+
+            if len(samples) < 2:
+                violations.append(
+                    Violation(
+                        "occlusion", times[0], times[-1], 0.0,
+                        f"occluder {track_id}: single-sighting track (flicker)",
+                    )
+                )
+
+            for sample, time in zip(samples, times):
+                box = {k: float(sample[k]) for k in ("x1", "y1", "x2", "y2")}
+                is_forced = any(a <= time <= b for a, b in forced)
+
+                if not (0 <= box["x1"] < box["x2"] <= 1 and 0 <= box["y1"] < box["y2"] <= 1):
+                    violations.append(
+                        Violation(
+                            "occlusion", time, time, 0.0,
+                            f"occluder {track_id}: degenerate box at d={sample['d']}",
+                        )
+                    )
+                    continue
+
+                column = self.column_at(float(sample["d"]))
+                centre = 0.5 * (box["x1"] + box["x2"])
+                if abs(centre - column) > REACH + 0.1:
+                    violations.append(
+                        Violation(
+                            "occlusion", time, time,
+                            abs(centre - column),
+                            f"occluder {track_id}: strip {centre:.2f} far from ball column {column:.2f}",
+                        )
+                    )
+
+                if not is_forced:
+                    if any(a <= time <= b for a, b in hidden):
+                        violations.append(
+                            Violation(
+                                "occlusion", time, time, 0.0,
+                                f"occluder {track_id}: emitted while the ball is hidden",
+                            )
+                        )
+                    if any(a <= time <= b for a, b in dodges):
+                        violations.append(
+                            Violation(
+                                "occlusion", time, time, 0.0,
+                                f"occluder {track_id}: emitted during a dodge, which steps in front",
+                            )
+                        )
+                    # The depth rule, against the ball's own resting line -
+                    # the same reference the derivation uses. The support
+                    # check has already tied that line to footage evidence,
+                    # so this closes the loop without re-measuring through
+                    # per-frame noise (a parked car notching the segmented
+                    # line must not un-earn a pole the ball plainly fronts).
+                    line = self.ground_at(float(sample["d"]))
+                    if box["y2"] < line + DEPTH_MARGIN - 0.02:
+                        violations.append(
+                            Violation(
+                                "occlusion", time, time,
+                                line - box["y2"],
+                                f"occluder {track_id}: base y={box['y2']:.3f} above the "
+                                f"ball's line y={line:.3f} - it stands farther than the ball",
+                            )
+                        )
+
+                if mask_file and sample.get("mask"):
+                    us = [float(sample.get(k, -1)) for k in ("u1", "v1", "u2", "v2")]
+                    if not (0 <= us[0] < us[2] <= 1 and 0 <= us[1] < us[3] <= 1):
+                        violations.append(
+                            Violation(
+                                "occlusion", time, time, 0.0,
+                                f"occluder {track_id}: bad mask uv at d={sample['d']}",
+                            )
+                        )
+
+            steps = [
+                abs(0.5 * (b["x1"] + b["x2"]) - 0.5 * (a["x1"] + a["x2"]))
+                for a, b in zip(samples, samples[1:])
+            ]
+            if steps and max(steps) > MAX_CENTER_STEP + 0.02:
+                violations.append(
+                    Violation(
+                        "occlusion", times[0], times[-1], max(steps),
+                        f"occluder {track_id}: strip jumps {max(steps):.2f} frame-widths "
+                        "between samples - two objects chained into one track",
+                    )
+                )
+
+        if mask_file and not (self.level_dir / mask_file).exists():
+            violations.append(
+                Violation(
+                    "occlusion", 0.0, 0.0, 0.0,
+                    f"level names occluder atlas '{mask_file}' but it is not next to the level",
+                )
+            )
+
+        return violations
+
     def run(self, timeline_path: Path | None = None) -> AuditResult:
         result = AuditResult()
         result.violations += self.check_support()
         result.violations += self.check_clearance()
+        result.violations += self.check_overlap(timeline_path)
         result.violations += self.check_dodges()
         result.violations += self.check_size()
         result.violations += self.check_script(timeline_path)
+        result.violations += self.check_occlusion(timeline_path)
         result.frames, result.supported_frames = getattr(
             self, "_support_stats", (0, 0)
         )

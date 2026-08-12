@@ -393,6 +393,30 @@ def _command_author(args: argparse.Namespace) -> int:
     obstacle_config = ObstacleConfig(character_column=args.character_column)
     segments, _ = build_surface_segments(surfaces, distance_map, obstacle_config)
 
+    output = Path(args.output).expanduser().resolve()
+
+    def bake_occluder_masks(tracks):
+        """SAM-segment each occluder sighting; the level carries the result.
+
+        Defined here rather than in authored.py because it owns IO: decoding
+        the video again and writing the atlas PNG next to the level.
+        """
+        if args.no_occluder_masks:
+            return None
+
+        from .occlude import bake_mask_atlas
+
+        count = sum(len(t.samples) for t in tracks)
+        atlas_path = output.with_name(f"{video.stem}.occluders.png")
+        with tqdm(total=count, unit="mask", desc="occluder masks") as progress:
+            atlas = bake_mask_atlas(
+                info, tracks, analysis_width=args.analysis_width, progress=progress
+            )
+        cv2.imwrite(str(atlas_path), atlas.image)
+        atlas.file_name = atlas_path.name
+        print(f"wrote {atlas_path} ({atlas_path.stat().st_size / 1e3:.0f} kB)")
+        return atlas
+
     level = build_authored_level(
         video,
         info,
@@ -408,6 +432,7 @@ def _command_author(args: argparse.Namespace) -> int:
         speed_curve=(result.times, result.speeds),
         analysis_width=args.analysis_width,
         playback_file=args.playback_file,
+        mask_baker=bake_occluder_masks,
     )
 
     # Light the ball from the footage: sample the pixels around where the
@@ -449,7 +474,15 @@ def _command_author(args: argparse.Namespace) -> int:
     for span in level["hidden"]:
         print(f"  {span['startTime']:.1f}s -> {span['endTime']:.1f}s")
 
-    output = Path(args.output).expanduser().resolve()
+    occluders: dict[int, int] = {}
+    for entry in level["foreground"]:
+        occluders[entry["id"]] = occluders.get(entry["id"], 0) + 1
+    masked = sum(1 for e in level["foreground"] if e.get("mask"))
+    print(
+        f"occluders            {len(occluders)} tracks, "
+        f"{len(level['foreground'])} samples ({masked} with silhouettes)"
+    )
+
     write_authored(output, level)
     print(f"\nwrote {output} ({output.stat().st_size / 1e6:.2f} MB)")
     return 0
@@ -580,12 +613,132 @@ def _command_ledges(args: argparse.Namespace) -> int:
     return 0
 
 
+def _command_occluders(args: argparse.Namespace) -> int:
+    """One composite still per occluder track, plus the occlusion verifier.
+
+    Each still draws a stand-in ball at the level's own path position and then
+    re-draws the strip exactly as the game does - video pixels through the
+    silhouette. If a still looks wrong, so will the game.
+
+    ``--verify`` additionally steps the whole level at video rate through the
+    game's mirrored strip logic and fails (exit 2) if any frame erases ball
+    pixels with no detected object in front - the "hole bitten out of the
+    ball" regression this exists to keep out.
+    """
+    video = _resolve_video(args.video)
+    if video is None:
+        return 1
+
+    level = json.loads(Path(args.level).expanduser().resolve().read_text())
+    atlas = None
+    if level.get("foregroundMaskFile"):
+        atlas_path = Path(args.level).expanduser().resolve().parent / level["foregroundMaskFile"]
+        atlas = cv2.imread(str(atlas_path), cv2.IMREAD_GRAYSCALE)
+
+    if args.verify:
+        from .occlude import verify_occlusion
+
+        detections_path = Path(args.detections).expanduser().resolve()
+        if not detections_path.exists():
+            print(f"error: --verify needs detections: {detections_path}", file=sys.stderr)
+            return 1
+        frames, det_w, det_h = load_detections(detections_path)
+
+        from .occlude import OCCLUDER_LABELS
+
+        labels = tuple(level.get("occluderLabels") or OCCLUDER_LABELS)
+        violations, stats = verify_occlusion(
+            level, atlas, frames, (det_w, det_h), labels=labels
+        )
+        print(
+            f"occlusion verify: {stats['frames_checked']} frames, "
+            f"{stats['frames_occluding']} with the ball behind something, "
+            f"worst phantom {stats['worst_phantom']:.1%} of ball area"
+        )
+        for violation in violations[:10]:
+            print(f"  {violation}")
+        if len(violations) > 10:
+            print(f"  ... and {len(violations) - 10} more")
+        if violations:
+            return 2
+        if args.verify_only:
+            return 0
+
+    entries = level.get("foreground", [])
+    if not entries:
+        print("level has no occluders; nothing to render")
+        return 0
+
+    map_t = np.array([p["t"] for p in level["timeToDistance"]])
+    map_d = np.array([p["d"] for p in level["timeToDistance"]])
+    path_d = np.array([p["d"] for p in level["path"]])
+    path_y = np.array([p["y"] for p in level["path"]])
+    path_x = np.array([p["x"] for p in level["path"]])
+    diameter = float(level.get("markerDiameter", 0.173)) or 0.173
+
+    # The sample of each track where the strip is closest to the ball: the
+    # moment occlusion is actually visible.
+    per_track: dict[int, tuple[float, float, dict]] = {}
+    for entry in entries:
+        column = float(np.interp(entry["d"], path_d, path_x))
+        gap = abs(0.5 * (entry["x1"] + entry["x2"]) - column)
+        time = float(np.interp(entry["d"], map_d, map_t))
+        if entry["id"] not in per_track or gap < per_track[entry["id"]][0]:
+            per_track[entry["id"]] = (gap, time, entry)
+
+    wanted = {round(t, 2): (tid, e) for tid, (_, t, e) in per_track.items()}
+    times = np.array(sorted(wanted))
+    out_dir = Path(args.output).expanduser().resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    info = probe(video)
+
+    for frame in iter_frames(info, analysis_width=args.analysis_width, stride=2):
+        if not times.size:
+            break
+        near = float(times[int(np.argmin(np.abs(times - frame.time)))])
+        if abs(near - frame.time) > 0.04:
+            continue
+        tid, entry = wanted.pop(near)
+        times = np.array(sorted(wanted))
+
+        img = frame.image.copy()
+        height, width = img.shape[:2]
+        d = float(np.interp(near, map_t, map_d))
+        bx = int(float(np.interp(d, path_d, path_x)) * width)
+        by = int(float(np.interp(d, path_d, path_y)) * height)
+        radius = int(diameter * height / 2)
+        cv2.circle(img, (bx, by - radius), radius, (40, 90, 230), -1)
+
+        x1, y1 = int(entry["x1"] * width), int(entry["y1"] * height)
+        x2, y2 = int(entry["x2"] * width), int(entry["y2"] * height)
+        if atlas is not None and entry.get("mask"):
+            ah, aw = atlas.shape
+            cell = atlas[
+                int(round((1 - entry["v2"]) * ah)) : int(round((1 - entry["v1"]) * ah)),
+                int(round(entry["u1"] * aw)) : int(round(entry["u2"] * aw)),
+            ]
+            mask = cv2.resize(cell, (max(x2 - x1, 1), max(y2 - y1, 1)))
+            alpha = np.clip((mask.astype(np.float32) / 255.0 - 0.35) / 0.3, 0, 1)[..., None]
+            img[y1:y2, x1:x2] = (
+                frame.image[y1:y2, x1:x2] * alpha + img[y1:y2, x1:x2] * (1 - alpha)
+            ).astype(np.uint8)
+        else:
+            img[y1:y2, x1:x2] = frame.image[y1:y2, x1:x2]
+
+        still = out_dir / f"occluder_{tid:02d}_{near:.1f}s.png"
+        cv2.imwrite(str(still), img)
+        print(f"wrote {still}")
+
+    return 0
+
+
 def _command_audit(args: argparse.Namespace) -> int:
     auditor = LevelAuditor(
         Path(args.level).expanduser().resolve(),
         Path(args.surfaces).expanduser().resolve(),
         Path(args.ledges).expanduser().resolve(),
         Path(args.detections).expanduser().resolve(),
+        video_path=Path(args.video).expanduser().resolve() if args.video else None,
     )
     result = auditor.run(
         Path(args.timeline).expanduser().resolve() if args.timeline else None
@@ -690,6 +843,11 @@ def main(argv: list[str] | None = None) -> int:
         default="IMG_3775.play.mp4",
         help="file name the game should play, as it appears in StreamingAssets",
     )
+    author.add_argument(
+        "--no-occluder-masks",
+        action="store_true",
+        help="skip the SAM silhouette pass; occluders fall back to rectangles",
+    )
     author.set_defaults(func=_command_author)
 
     transcode_parser = subparsers.add_parser(
@@ -720,6 +878,32 @@ def main(argv: list[str] | None = None) -> int:
     ledges_parser.add_argument("--stride", type=int, default=5)
     ledges_parser.set_defaults(func=_command_ledges)
 
+    occluders_parser = subparsers.add_parser(
+        "occluders",
+        help="composite stills of the ball behind each occluder - the eyeball check",
+    )
+    occluders_parser.add_argument("video", help="path to the source video")
+    occluders_parser.add_argument("--level", default="out/IMG_3775.authored.json")
+    occluders_parser.add_argument("-o", "--output", default="out/occluders")
+    occluders_parser.add_argument("--analysis-width", type=int, default=960)
+    occluders_parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="step the level at video rate through the game's mirrored strip "
+        "logic; exit 2 if any frame erases ball pixels with nothing there",
+    )
+    occluders_parser.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="with --verify: skip rendering the stills",
+    )
+    occluders_parser.add_argument(
+        "--detections",
+        default="out/IMG_3775.detections.json",
+        help="cached detections .json; the ground truth --verify checks against",
+    )
+    occluders_parser.set_defaults(func=_command_occluders)
+
     audit_parser = subparsers.add_parser(
         "audit", help="frame-by-frame check of the level against footage evidence"
     )
@@ -728,6 +912,12 @@ def main(argv: list[str] | None = None) -> int:
     audit_parser.add_argument("--ledges", default="out/IMG_3775.ledges.npz")
     audit_parser.add_argument("--detections", default="out/IMG_3775.detections.json")
     audit_parser.add_argument("--timeline", default="timeline.json")
+    audit_parser.add_argument(
+        "--video",
+        default=None,
+        help="source clip; when given, box-test overlap hits are confirmed "
+        "against SAM silhouettes from the frames themselves",
+    )
     audit_parser.set_defaults(func=_command_audit)
 
     args = parser.parse_args(argv)

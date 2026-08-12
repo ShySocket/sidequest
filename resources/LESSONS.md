@@ -34,6 +34,26 @@ time each one cost.
 - **Components that read config in `Awake`** (VehicleSpeedController disables
   itself without one) must be built inactive, fields set by reflection, then
   activated — the order `PlayModeTestFactory` uses.
+- **`VideoPlayer`'s clock runs ahead of its pictures right after Play.** Cold
+  decoder buffers mean the first ~half second shows a frozen frame while
+  `player.time` advances — so the ball climbed against a still image ("laggy
+  on load"). Hold the run: issue Play once to get frame 0 delivered, pause on
+  it briefly, then start — the video and the ball then move together from the
+  first visible moment. Restart takes the same path (a seek to 0 is just as
+  cold).
+- **Choreography and physics must share a clock.** Takeoffs fired on *video*
+  time while the arc integrated with `Time.deltaTime` — correct at 1× and
+  silently desynchronized at every other rate (fast-forward in captures, and
+  the vehicle-speed mode where the video follows the car). A jump authored to
+  land at 11.55s landed wherever the wall clock said. Anything authored to
+  video moments must advance on video-time deltas; only view-side animation
+  (squash recovery, roll) belongs on wall time. Caught by a capture harness
+  that fast-forwards — worth keeping for that reason alone.
+- **Serialized tuning in a saved scene silently pins old limits.** The jump
+  height clamp lived in a `[SerializeField]` range — raising the code default
+  would have done nothing, because the scene had 0.50 baked in. Authored cue
+  values are trusted (they are audited offline); scene-serialized ranges only
+  clamp the fallback path.
 
 ## Batchmode testing
 
@@ -78,6 +98,57 @@ time each one cost.
 - Detection boxes of one object arrive as several; union same-class masks
   before taking edges. And 2D box-disjointness is the wrong clearance
   criterion for tall obstacles (see AUDIT_CRITERIA).
+- **Every occlusion failure mode must leave the ball visible.** The first
+  silhouette atlas used a white background and white "segmentation failed"
+  cells so samples could fall back to rectangle occlusion. Wrong default:
+  bilinear sampling bled the white in at cell borders and bit clean-edged
+  notches out of the ball with nothing in front of it, and a generous
+  nearest-sample hold parked stale silhouettes where poles used to be.
+  Black-everything atlases, an edge hold bounded to half the track's own
+  sample spacing, and a strip-touches-ball gate made "behind a real object,
+  or invisible" the only reachable states — enforced by
+  `analyze occluders --verify`, which mirrors the game's lookup 1:1.
+- **A jump is wrong at its endpoints before it is wrong at its peak.** Every
+  overlap the frame-by-frame review caught was at a takeoff or a landing,
+  never mid-arc: the van's hood had already reached the column before the
+  annotated takeoff; the parked car was still crossing the old landing spot.
+  Rules that prevent the whole class: (1) the takeoff must precede the
+  obstacle reaching the ball's column — measure the crossing from pixels, not
+  from when it "feels" due; (2) the landing must wait until the crossing has
+  fully passed — extend `airTime`, don't steepen the arc; (3) verify with the
+  audit's overlap check (`analyze audit --video`), which walks every frame of
+  every arc and confirms box hits against SAM silhouettes. Eyeballing two or
+  three frames misses exactly the endpoint frames that matter.
+- **Land on the surface where it actually is, not where the timeline says it
+  starts.** "Onto the hedge" landed on the hedge's *timeline* start while the
+  hedge's leading end was still half a second from the ball's column — the
+  ball stood on hedge-top height over sidewalk pixels. A surface handover
+  must be keyed to when the surface's own pixels reach the column (read it
+  off the detections/ledges), and the hop that gets the ball there lands at
+  that moment, not at the label's edge.
+- **Level changes need a beat.** A ground line that steps down or up (kerb,
+  platform) with the ball just gliding across reads as a glitch; a small
+  scripted `hop` (auto, uncued, unscored) at the step is what makes the
+  change legible. Corollary: never prompt the player for one — a press that
+  scores nothing teaches the wrong lesson.
+- **Some "obstacles" are depth stories, not jumps.** When the thing the ball
+  grazes is *nearer the camera* than the ball's lane (box base clearly below
+  the resting line), no arc geometry fixes the overlap — the honest render is
+  the ball passing behind it, which the occlusion depth rule provides for
+  free once the class is in `occluderLabels`. Trying to out-jump a
+  foreground object produces absurd arcs; occluding behind a same-plane
+  object produces a swallowed ball. Depth decides, per object, measured.
+- **Depth from screen height needs the right reference line.** For occlusion,
+  "box base below the line = nearer the camera" works — but only against the
+  **ball's own resting line**, and only while the ball is on a true ground
+  surface. Compared against the per-frame segmented line, a parked car notches
+  the plane and un-earns a pole the ball plainly fronts; compared while the
+  ball rides a railing, a lot post *beyond* the fence reads as nearer. Where
+  the assumption can't hold, don't occlude: a ball wrongly swallowed reads far
+  worse than one wrongly in front. Every threshold in `occlude.py` was set by
+  rendering the disagreeing frames and looking (three of five auto-derived
+  candidates were wrong until the reference was fixed; then seven of seven
+  were right, including two the hand-authored spans had missed entirely).
 
 ## Process
 

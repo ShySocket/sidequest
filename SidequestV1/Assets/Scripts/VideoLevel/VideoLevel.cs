@@ -89,11 +89,26 @@ public sealed class VideoLevel
 
     public static VideoLevel LoadFromStreamingAssets(string fileName)
     {
-        string path = Path.Combine(Application.streamingAssetsPath, fileName);
-        string json;
+        byte[] bytes = ReadStreamingAsset(fileName,
+            "Run 'uv run analyze author ...' and copy the result into StreamingAssets.");
+        if (bytes == null)
+        {
+            return null;
+        }
 
-        // On Android StreamingAssets lives inside the compressed APK, so it can
-        // only be read through UnityWebRequest; everywhere else it is a file.
+        return Parse(System.Text.Encoding.UTF8.GetString(bytes));
+    }
+
+    /// <summary>Raw bytes of a StreamingAssets file, or null with an error logged.</summary>
+    /// <remarks>
+    /// On Android StreamingAssets lives inside the compressed APK, so it can
+    /// only be read through UnityWebRequest; everywhere else it is a file.
+    /// Also used for the occluder silhouette atlas that ships with a level.
+    /// </remarks>
+    public static byte[] ReadStreamingAsset(string fileName, string hint = "")
+    {
+        string path = Path.Combine(Application.streamingAssetsPath, fileName);
+
         if (path.Contains("://"))
         {
             using UnityWebRequest request = UnityWebRequest.Get(path);
@@ -104,26 +119,20 @@ public sealed class VideoLevel
 
             if (request.result != UnityWebRequest.Result.Success)
             {
-                Debug.LogError($"VideoLevel: could not read {path}: {request.error}");
+                Debug.LogError($"VideoLevel: could not read {path}: {request.error} {hint}");
                 return null;
             }
 
-            json = request.downloadHandler.text;
+            return request.downloadHandler.data;
         }
-        else
+
+        if (!File.Exists(path))
         {
-            if (!File.Exists(path))
-            {
-                Debug.LogError(
-                    $"VideoLevel: no level file at {path}. Run "
-                    + "'uv run analyze author ...' and copy the result into StreamingAssets.");
-                return null;
-            }
-
-            json = File.ReadAllText(path);
+            Debug.LogError($"VideoLevel: no file at {path}. {hint}");
+            return null;
         }
 
-        return Parse(json);
+        return File.ReadAllBytes(path);
     }
 
     public static VideoLevel Parse(string json)
@@ -201,40 +210,118 @@ public sealed class VideoLevel
         return point.x > 0f ? point.x : data.characterColumn;
     }
 
-    /// <summary>Foreground strip (pole) the ball currently passes behind, if any.</summary>
+    /// <summary>Name of the occluder silhouette atlas, or empty for none.</summary>
+    public string OccluderMaskFileName => data.foregroundMaskFile;
+
+    /// <summary>Foreground strip the ball currently passes behind, if any.</summary>
     /// <remarks>
-    /// Samples come from detections every few frames; nearest-sample lookup with
-    /// a small tolerance, because interpolating between two different poles
-    /// would sweep the strip across the screen.
+    /// MIRRORED by strip_at in occlude.py, which the analyzer's occlusion
+    /// verifier runs against the footage - change both together.
+    ///
+    /// Samples come from detections every few frames, which used to make the
+    /// strip snap between them. Samples sharing an id are the same physical
+    /// object, so between two of those the box is interpolated. Past a
+    /// track's ends the last sighting may linger only HALF ITS OWN SAMPLE
+    /// SPACING: an earlier version held it for a generous fixed tolerance,
+    /// and the frozen silhouette sat where the pole used to be, erasing part
+    /// of the ball with nothing visibly in front of it. Occlusion must turn
+    /// off the moment the evidence does.
+    ///
+    /// <paramref name="maskUv"/> is the object's silhouette cell in the
+    /// occluder atlas when <paramref name="hasMask"/> is true. The nearer
+    /// sample's cell is used as-is rather than blended - silhouettes of the
+    /// same pole a sixth of a second apart are near-identical, and the box
+    /// carrying it is what actually moves.
     /// </remarks>
-    public bool TryGetForeground(float distance, out Rect box)
+    public bool TryGetForeground(float distance, out Rect box, out Rect maskUv, out bool hasMask)
     {
         box = default;
-        if (data.foreground == null || data.foreground.Count == 0)
+        maskUv = default;
+        hasMask = false;
+        List<VideoLevelForegroundBox> samples = data.foreground;
+        if (samples == null || samples.Count == 0)
         {
             return false;
         }
 
-        int best = -1;
-        float bestGap = TotalDistance > 0f ? TotalDistance * 0.006f : 250f;
-        for (int i = 0; i < data.foreground.Count; i++)
+        // First sample at or beyond the current distance. The list is sorted
+        // by construction (one candidate per detection frame, in time order).
+        int after = 0;
+        while (after < samples.Count && samples[after].d < distance)
         {
-            float gap = Mathf.Abs(data.foreground[i].d - distance);
-            if (gap < bestGap)
-            {
-                bestGap = gap;
-                best = i;
-            }
+            after++;
+        }
+        int before = after - 1;
+
+        VideoLevelForegroundBox a = before >= 0 ? samples[before] : null;
+        VideoLevelForegroundBox b = after < samples.Count ? samples[after] : null;
+
+        // id 0 means "no track identity" - an old-format level where every
+        // sample deserializes to the default. Interpolating between two of
+        // those could sweep the strip between two different poles, which is
+        // exactly what track ids exist to prevent.
+        float sameObjectGap = TotalDistance > 0f ? TotalDistance * 0.012f : 500f;
+        if (a != null && b != null && a.id == b.id && a.id != 0 && b.d - a.d <= sameObjectGap)
+        {
+            float span = b.d - a.d;
+            float alpha = span > 0f ? Mathf.Clamp01((distance - a.d) / span) : 0f;
+            box = Rect.MinMaxRect(
+                Mathf.Lerp(a.x1, b.x1, alpha),
+                Mathf.Lerp(a.y1, b.y1, alpha),
+                Mathf.Lerp(a.x2, b.x2, alpha),
+                Mathf.Lerp(a.y2, b.y2, alpha));
+            VideoLevelForegroundBox near = alpha < 0.5f ? a : b;
+            hasMask = near.mask != 0;
+            maskUv = Rect.MinMaxRect(near.u1, near.v1, near.u2, near.v2);
+            return true;
         }
 
-        if (best < 0)
+        int nearest = -1;
+        float gap = float.MaxValue;
+        if (a != null)
+        {
+            nearest = before;
+            gap = distance - a.d;
+        }
+        if (b != null && b.d - distance < gap)
+        {
+            nearest = after;
+            gap = b.d - distance;
+        }
+
+        if (nearest < 0 || gap > EdgeHold(samples, nearest))
         {
             return false;
         }
 
-        VideoLevelForegroundBox sample = data.foreground[best];
-        box = Rect.MinMaxRect(sample.x1, sample.y1, sample.x2, sample.y2);
+        VideoLevelForegroundBox held = samples[nearest];
+        box = Rect.MinMaxRect(held.x1, held.y1, held.x2, held.y2);
+        hasMask = held.mask != 0;
+        maskUv = Rect.MinMaxRect(held.u1, held.v1, held.u2, held.v2);
         return true;
+    }
+
+    /// <summary>How far past a sighting the strip may linger, in distance.</summary>
+    /// <remarks>
+    /// Half the track's own local sample spacing: enough to bridge the
+    /// half-interval before the first and after the last detection, never
+    /// enough to leave a silhouette frozen while the world sweeps on.
+    /// </remarks>
+    static float EdgeHold(List<VideoLevelForegroundBox> samples, int index)
+    {
+        VideoLevelForegroundBox sample = samples[index];
+        float spacing = float.MaxValue;
+        if (index > 0 && samples[index - 1].id == sample.id)
+        {
+            spacing = Mathf.Min(spacing, sample.d - samples[index - 1].d);
+        }
+
+        if (index + 1 < samples.Count && samples[index + 1].id == sample.id)
+        {
+            spacing = Mathf.Min(spacing, samples[index + 1].d - sample.d);
+        }
+
+        return spacing == float.MaxValue ? 0f : spacing * 0.5f;
     }
 
     /// <summary>Light the footage casts where the character stands, ~white in ordinary daylight.</summary>

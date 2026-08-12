@@ -129,8 +129,16 @@ class Timeline:
     e.g. 'roll along the middle of the sidewalk, a bit in front'."""
 
     behind_spans: list[dict] = None  # type: ignore[assignment]
-    """Spans where the ball should pass BEHIND foreground poles; emitted as a
-    foreground track the game re-draws over the ball."""
+    """OVERRIDE spans that force occlusion even where the measured depth rule
+    says no. Occlusion itself is derived automatically (see occlude.py); a
+    plain clip needs no spans here."""
+
+    front_spans: list[dict] = None  # type: ignore[assignment]
+    """OVERRIDE spans where derived occlusion is suppressed - the escape hatch
+    for a detector box the depth rule misreads."""
+
+    occluder_labels: list[str] = None  # type: ignore[assignment]
+    """Detection classes the ball may pass behind; None = occlude.py default."""
 
     @staticmethod
     def load(path: Path) -> Timeline:
@@ -146,6 +154,8 @@ class Timeline:
             post_marker_column=float(raw.get("postMarkerColumn", 0.35)),
             path_adjust=raw.get("pathAdjust", []),
             behind_spans=raw.get("behindSpans", []),
+            front_spans=raw.get("frontSpans", []),
+            occluder_labels=raw.get("occluderLabels"),
         )
 
 
@@ -200,6 +210,7 @@ def build_authored_level(
     playback_file: str | None = None,
     path_samples: int = 1400,
     map_samples: int = 1200,
+    mask_baker=None,
 ) -> dict:
     duration = float(distance_map.times[-1])
     sample_times = np.linspace(float(distance_map.times[0]), duration, path_samples)
@@ -293,21 +304,30 @@ def build_authored_level(
         # events: a chained pair 0.4s apart cannot share a 0.7s window.
         entries = [dict(e) for e in timeline.events]
         entries.sort(key=lambda e: e["time"])
-        for position, entry in enumerate(entries):
+        # Gaps are measured between SCORED events only: a believability hop
+        # (type "hop") is not played, so it must not shrink its neighbours'
+        # windows or drag their warnings around.
+        scored = [e for e in entries if e.get("type") != "hop"]
+        for position, entry in enumerate(scored):
             previous_gap = (
-                entry["time"] - entries[position - 1]["time"] if position > 0 else 99.0
+                entry["time"] - scored[position - 1]["time"] if position > 0 else 99.0
             )
             next_gap = (
-                entries[position + 1]["time"] - entry["time"]
-                if position + 1 < len(entries)
+                scored[position + 1]["time"] - entry["time"]
+                if position + 1 < len(scored)
                 else 99.0
             )
             entry["window"] = float(
                 np.clip(0.8 * min(previous_gap, next_gap), 0.24, 0.7)
             )
-            # 0.55s reads as "now": the 1.2s fade-in was annotated as coming
-            # way too soon.
-            entry["lead"] = float(np.clip(0.7 * previous_gap, 0.35, 0.55))
+            # Long enough to genuinely play to (the 0.55s cap was annotated as
+            # leaving no chance to react), short enough not to blur into the
+            # previous cue.
+            entry["lead"] = float(np.clip(0.7 * previous_gap, 0.45, 0.9))
+        for entry in entries:
+            if entry.get("type") == "hop":
+                entry["window"] = 0.0
+                entry["lead"] = 0.0
     else:
         # Marker arcs describe the jumps the designer actually drew, so they
         # replace the hand-typed cues wherever the marker was animated. Beyond
@@ -346,7 +366,10 @@ def build_authored_level(
     for index, entry in enumerate(entries):
         time = float(entry["time"])
         kind = entry.get("type", "jump")
-        window = float(entry.get("window") or timeline.event_windows.get(kind, 0.55))
+        if entry.get("window") is not None:
+            window = float(entry["window"])
+        else:
+            window = float(timeline.event_windows.get(kind, 0.55))
         events.append(
             {
                 "id": index,
@@ -385,6 +408,35 @@ def build_authored_level(
         for span in timeline.hidden
     ]
 
+    # Regions of the video the game re-draws IN FRONT of the ball, so it
+    # passes visibly behind poles and signs. Derived from the depth rule in
+    # occlude.py rather than authored; behindSpans/frontSpans only override.
+    from .occlude import (
+        OcclusionConfig,
+        derive_occluder_tracks,
+        foreground_entries,
+    )
+
+    occluder_tracks = []
+    if detection_data is not None:
+        frames, det_w, det_h = detection_data
+        occluder_tracks = derive_occluder_tracks(
+            frames,
+            (det_w, det_h),
+            sample_times,
+            # The finished resting path: depth orders candidates against where
+            # the BALL is, and the path is the one line the game guarantees.
+            # Where the path stops meaning depth - riding a rail or hedge top -
+            # the elevated flag suppresses instead.
+            blended,
+            columns,
+            OcclusionConfig.from_timeline(timeline),
+            elevated=np.array(
+                [name not in GROUND_SURFACES for name in names], dtype=bool
+            ),
+        )
+    atlas = mask_baker(occluder_tracks) if mask_baker and occluder_tracks else None
+
     return {
         "version": AUTHORED_VERSION,
         "source": {
@@ -412,12 +464,11 @@ def build_authored_level(
         "timeToDistance": time_to_distance,
         "path": path,
         "screenSpeed": screen_speed,
-        # Regions of the video the game re-draws IN FRONT of the ball, so it
-        # passes visibly behind the poles the annotations name. Emitted only
-        # inside behindSpans, from pole detections near the ball's column.
-        "foreground": _foreground_track(
-            timeline, detection_data, distance_map, sample_times, columns
-        ),
+        "foreground": foreground_entries(occluder_tracks, distance_map, atlas),
+        "foregroundMaskFile": atlas.file_name if atlas is not None else "",
+        # The classes the strips were derived from, so verifiers judge the
+        # shipped strips against the same truth the derivation used.
+        "occluderLabels": list(OcclusionConfig.from_timeline(timeline).labels),
         "events": events,
         "hidden": hidden,
     }
@@ -723,63 +774,6 @@ def _apply_marker(
         ground * (1.0 - weight) + sampled_ground * weight,
         column,
     )
-
-
-def _foreground_track(
-    timeline: Timeline,
-    detection_data: tuple | None,
-    distance_map: DistanceMap,
-    sample_times: np.ndarray,
-    columns: np.ndarray,
-) -> list[dict]:
-    """Pole boxes the ball should pass behind, keyed on distance.
-
-    True per-pixel occlusion would need runtime segmentation; a rectangle of
-    the video re-drawn over the ball is enough, because the re-drawn pixels are
-    identical to the background beneath them - the only visible effect is that
-    the ball disappears behind that strip, which is exactly what "behind the
-    pole" looks like. Boxes are widened slightly so the ball never pokes out of
-    a too-tight detection.
-    """
-    if detection_data is None or not (timeline.behind_spans or []):
-        return []
-
-    frames, det_w, det_h = detection_data
-    track: list[dict] = []
-    for frame in frames:
-        if not any(
-            float(s["from"]) <= frame.time <= float(s["to"])
-            for s in timeline.behind_spans
-        ):
-            continue
-
-        column = float(np.interp(frame.time, sample_times, columns))
-        best = None
-        for det in frame.detections:
-            if det.label not in ("pole", "traffic sign"):
-                continue
-            x1, y1, x2, y2 = det.box
-            x1, x2 = x1 / det_w, x2 / det_w
-            y1, y2 = y1 / det_h, y2 / det_h
-            if x2 < column - 0.12 or x1 > column + 0.12:
-                continue
-            centre = 0.5 * (x1 + x2)
-            if best is None or abs(centre - column) < abs(best[0] - column):
-                best = (centre, x1, y1, x2, y2)
-
-        if best is not None:
-            _, x1, y1, x2, y2 = best
-            track.append(
-                {
-                    "d": round(float(distance_map.distance_at(frame.time)), 3),
-                    "x1": round(max(0.0, x1 - 0.008), 4),
-                    "y1": round(max(0.0, y1 - 0.01), 4),
-                    "x2": round(min(1.0, x2 + 0.008), 4),
-                    "y2": round(min(1.0, y2 + 0.01), 4),
-                }
-            )
-
-    return track
 
 
 def _smooth_step(values: np.ndarray, times: np.ndarray, ramp: float) -> np.ndarray:

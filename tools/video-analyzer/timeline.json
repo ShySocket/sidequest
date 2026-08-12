@@ -1,198 +1,256 @@
 {
-  "_comment": [
-    "Authoritative choreography for IMG_3775.mov, in VIDEO SECONDS, built from",
-    "frame-annotated review (the top-left clock). Every jump and dodge below is",
-    "predetermined: it happens at exactly `time` on every playthrough. Player",
-    "input only scores - a press inside the window clears, otherwise the ball",
-    "flashes red and the motion happens anyway.",
-    "",
-    "`time` is the takeoff; `airTime` is takeoff-to-landing (several landings",
-    "were annotated exactly, e.g. 34.00->35.47 and 40.71->42.35); `height` is",
-    "the arc peak in frame heights, sized against the obstacle's detection box.",
-    "Scoring windows and warning leads are derived from the gaps between events",
-    "at authoring time, so close chains (25.88/26.30) get tight windows."
-  ],
-  "authoritativeEvents": true,
-  "ballScale": 0.8,
-  "postMarkerColumn": 0.45,
-  "surfaces": [
-    {
-      "from": 0.0,
-      "surface": "rail"
-    },
-    {
-      "from": 7.55,
-      "surface": "floor"
-    },
-    {
-      "from": 19.39,
-      "surface": "sidewalk"
-    },
-    {
-      "from": 26.28,
-      "surface": "hedge"
-    },
-    {
-      "from": 29.2,
-      "surface": "floor"
-    },
-    {
-      "from": 47.05,
-      "surface": "sidewalk"
-    },
-    {
-      "from": 77.5,
-      "surface": "grass"
-    }
-  ],
-  "events": [
-    {
-      "time": 6.41,
-      "type": "jump",
-      "label": "car",
-      "height": 0.26,
-      "airTime": 1.14
-    },
-    {
-      "time": 9.94,
-      "type": "jump",
-      "label": "van (whole)",
-      "height": 0.44,
-      "airTime": 1.61
-    },
-    {
-      "time": 17.0,
-      "type": "jump",
-      "label": "suv",
-      "height": 0.44,
-      "airTime": 1.2
-    },
-    {
-      "time": 23.52,
-      "type": "jump",
-      "label": "people",
-      "height": 0.3,
-      "airTime": 1.08
-    },
-    {
-      "time": 25.88,
-      "type": "jump",
-      "label": "onto bush",
-      "height": 0.14,
-      "airTime": 0.4
-    },
-    {
-      "time": 26.3,
-      "type": "jump",
-      "label": "sign, on bush",
-      "height": 0.18,
-      "airTime": 0.55
-    },
-    {
-      "time": 28.1,
-      "type": "jump",
-      "label": "sign, on bush",
-      "height": 0.18,
-      "airTime": 0.55
-    },
-    {
-      "time": 31.0,
-      "type": "jump",
-      "label": "car",
-      "height": 0.36,
-      "airTime": 0.95
-    },
-    {
-      "time": 32.7,
-      "type": "dodge",
-      "label": "pole"
-    },
-    {
-      "time": 34.0,
-      "type": "jump",
-      "label": "two cars",
-      "height": 0.4,
-      "airTime": 1.47
-    },
-    {
-      "time": 40.71,
-      "type": "jump",
-      "label": "car",
-      "height": 0.38,
-      "airTime": 1.64
-    },
-    {
-      "time": 46.71,
-      "type": "jump",
-      "label": "chain",
-      "height": 0.12,
-      "airTime": 0.34
-    },
-    {
-      "time": 56.0,
-      "type": "dodge",
-      "label": "stop sign"
-    },
-    {
-      "time": 77.0,
-      "type": "jump",
-      "label": "fence",
-      "height": 0.3,
-      "airTime": 1.2
-    },
-    {
-      "time": 82.0,
-      "type": "dodge",
-      "label": "sign"
-    }
-  ],
-  "hidden": [
-    {
-      "from": 58.5,
-      "to": 75.0
-    }
-  ],
-  "pathAdjust": [
-    {
-      "from": 19.39,
-      "to": 23.4,
-      "dy": 0.05,
-      "_why": "roll along the middle of the sidewalk, a bit in front"
-    },
-    {
-      "from": 41.9,
-      "to": 43.6,
-      "dy": -0.09,
-      "_why": "land above/behind the parked car at 42.35, not on it"
-    },
-    {
-      "from": 84.5,
-      "to": 87.6,
-      "dy": 0.07,
-      "_why": "grass bank at the clip end: keep the ball inside the visible region"
-    }
-  ],
-  "behindSpans": [
-    {
-      "from": 40.6,
-      "to": 42.5,
-      "_why": "the ball passes behind the pole during this arc"
-    },
-    {
-      "from": 47.2,
-      "to": 56.5,
-      "_why": "rolling mid-scene: visibly behind the poles it passes"
-    }
-  ],
-  "surfaceOffsets": {
-    "rail": -0.175,
-    "floor": 0.0,
-    "sidewalk": 0.0,
-    "grass": 0.0
+ "_comment": [
+  "Authoritative choreography for IMG_3775.mov, in VIDEO SECONDS, built from",
+  "frame-annotated review (the top-left clock). Every jump and dodge below is",
+  "predetermined: it happens at exactly `time` on every playthrough. Player",
+  "input only scores - a press inside the window clears, otherwise the ball",
+  "flashes red and the motion happens anyway. type `hop` is a small automatic",
+  "believability hop (a level change, a kerb) that is never cued or scored.",
+  "",
+  "`time` is the takeoff; `airTime` is takeoff-to-landing; `height` is the arc",
+  "peak in frame heights. Takeoffs and air times are sized against the frames",
+  "themselves: the rule is that no frame of an arc may show the ball",
+  "overlapping the obstacle it clears - which is why several takeoffs sit",
+  "earlier than the obstacle reaching the ball (the van's hood arrives at the",
+  "column before the annotated moment) and several arcs outlast the",
+  "obstacle's whole crossing (the parked car crosses the old landing spot).",
+  "Scoring windows and warning leads are derived from the gaps between scored",
+  "events at authoring time; hops are invisible to that derivation."
+ ],
+ "authoritativeEvents": true,
+ "ballScale": 0.8,
+ "postMarkerColumn": 0.45,
+ "surfaces": [
+  {
+   "from": 0.0,
+   "surface": "rail"
   },
-  "eventWindows": {
-    "jump": 0.55,
-    "platform": 0.7,
-    "dodge": 0.7
+  {
+   "from": 7.55,
+   "surface": "floor"
+  },
+  {
+   "from": 19.39,
+   "surface": "sidewalk"
+  },
+  {
+   "from": 26.6,
+   "surface": "hedge"
+  },
+  {
+   "from": 29.2,
+   "surface": "floor"
+  },
+  {
+   "from": 47.05,
+   "surface": "sidewalk"
+  },
+  {
+   "from": 77.5,
+   "surface": "grass"
   }
+ ],
+ "events": [
+  {
+   "time": 6.41,
+   "type": "jump",
+   "label": "car",
+   "height": 0.3,
+   "airTime": 2.2,
+   "_why": "the car crosses the old landing spot until ~8.5s; landing at 8.61 is the first clear ground, and the same arc carries the rail-to-road drop"
+  },
+  {
+   "time": 9.45,
+   "type": "jump",
+   "label": "van (whole)",
+   "height": 0.5,
+   "airTime": 2.1,
+   "_why": "the van's hood reaches the column at ~9.7, before the annotated 9.94 - takeoff must beat it; landing 11.55 right after the tail is annotated exact"
+  },
+  {
+   "time": 12.0,
+   "type": "hop",
+   "label": "down a level",
+   "height": 0.1,
+   "airTime": 0.4
+  },
+  {
+   "time": 16.35,
+   "type": "hop",
+   "label": "up onto platform",
+   "height": 0.1,
+   "airTime": 0.4
+  },
+  {
+   "time": 17.0,
+   "type": "jump",
+   "label": "suv",
+   "height": 0.44,
+   "airTime": 1.62,
+   "_why": "annotated landing on the sidewalk at 18.62"
+  },
+  {
+   "time": 23.1,
+   "type": "jump",
+   "label": "people",
+   "height": 0.55,
+   "airTime": 2.6,
+   "_why": "the group is nearly frame-tall; the first woman crosses at 23.65 and the tall man at 24.35-24.6, so the arc peak is centred on him and takeoff beats her - measured frame by frame for zero overlap"
+  },
+  {
+   "time": 25.88,
+   "type": "jump",
+   "label": "onto bush, over its sign",
+   "height": 0.4,
+   "airTime": 0.75,
+   "_why": "the hedge's leading end only reaches the column at ~26.55; landing before that hovered over sidewalk pixels. One arc lands 26.63 on the hedge proper and clears the end sign crossing at 26.35-26.5"
+  },
+  {
+   "time": 27.42,
+   "type": "jump",
+   "label": "sign, on bush",
+   "height": 0.26,
+   "airTime": 0.65,
+   "_why": "this sign crosses the column at 27.65-27.85 (annotated as approaching at 27.36); peak centred on the crossing"
+  },
+  {
+   "time": 28.22,
+   "type": "jump",
+   "label": "sign, on bush",
+   "height": 0.26,
+   "airTime": 0.62,
+   "_why": "crossing measured 28.42-28.62; the old 28.10/0.55 arc landed exactly on the sign"
+  },
+  {
+   "time": 31.0,
+   "type": "jump",
+   "label": "car",
+   "height": 0.36,
+   "airTime": 1.08,
+   "_why": "the descent at 0.95s air still touched the car's pixels at 31.83 (SAM-confirmed); landing 32.08 is right in front of it and clear"
+  },
+  {
+   "time": 32.7,
+   "type": "dodge",
+   "label": "pole"
+  },
+  {
+   "time": 33.85,
+   "type": "jump",
+   "label": "two cars",
+   "height": 0.44,
+   "airTime": 1.62,
+   "_why": "the near black car's roof is over the old 34.0 takeoff; starting 0.15s earlier clears it, landing 35.47 annotated exact"
+  },
+  {
+   "time": 40.71,
+   "type": "jump",
+   "label": "car",
+   "height": 0.38,
+   "airTime": 1.64
+  },
+  {
+   "time": 46.71,
+   "type": "jump",
+   "label": "chain",
+   "height": 0.12,
+   "airTime": 0.34
+  },
+  {
+   "time": 56.0,
+   "type": "dodge",
+   "label": "stop sign"
+  },
+  {
+   "time": 77.0,
+   "type": "jump",
+   "label": "fence",
+   "height": 0.3,
+   "airTime": 1.2
+  },
+  {
+   "time": 82.0,
+   "type": "dodge",
+   "label": "sign"
+  }
+ ],
+ "hidden": [
+  {
+   "from": 58.5,
+   "to": 75.0
+  }
+ ],
+ "pathAdjust": [
+  {
+   "from": 19.39,
+   "to": 23.4,
+   "dy": 0.05,
+   "_why": "roll along the middle of the sidewalk, a bit in front"
+  },
+  {
+   "from": 24.9,
+   "to": 25.8,
+   "dy": 0.05,
+   "_why": "land parallel to the people and the bushes, not visibly behind them"
+  },
+  {
+   "from": 41.9,
+   "to": 43.6,
+   "dy": -0.03,
+   "_why": "land beside the parked car at 42.35, on the lot pavement next to it - the old -0.09 floated the ball above and read as behind it"
+  },
+  {
+   "from": 84.5,
+   "to": 87.6,
+   "dy": 0.07,
+   "_why": "grass bank at the clip end: keep the ball inside the visible region"
+  }
+ ],
+ "behindSpans": [
+  {
+   "from": 37.05,
+   "to": 37.65,
+   "_why": "a near pole sweeps the column at 37.2-37.5 while the ball rolls; it should pass visibly behind it"
+  },
+  {
+   "from": 40.6,
+   "to": 42.5,
+   "_why": "the ball passes behind the pole during this arc"
+  },
+  {
+   "from": 47.2,
+   "to": 56.5,
+   "_why": "rolling mid-scene: visibly behind the poles it passes"
+  }
+ ],
+ "occluderLabels": [
+  "pole",
+  "traffic sign",
+  "car"
+ ],
+ "_occluderLabels_why": [
+  "Cars whose base sits clearly below the ball's line are between the ball",
+  "and the camera - the parked grey car at 7.6-8.5s and the van's tall tail",
+  "at 11.0-11.3s. The ball descending past them belongs BEHIND them, and the",
+  "depth rule already knows which those are; cars at the ball's own depth",
+  "(the 31s and 34s landings) fail the margin and stay unoccluded."
+ ],
+ "frontSpans": [
+  {
+   "from": 29.0,
+   "to": 31.0,
+   "_why": "the slide off the hedge happens in front of the bush and its signs - nothing may occlude it"
+  }
+ ],
+ "surfaceOffsets": {
+  "rail": -0.175,
+  "floor": 0.0,
+  "sidewalk": 0.0,
+  "grass": 0.0
+ },
+ "eventWindows": {
+  "jump": 0.55,
+  "platform": 0.7,
+  "dodge": 0.7
+ }
 }

@@ -30,6 +30,7 @@ public sealed class VideoBackground : MonoBehaviour
 
     const float BackgroundDistance = 50f;
     const string PreferredShader = "Sidequest/RearCameraBackground";
+    const string ForegroundShader = "Sidequest/VideoForegroundMasked";
 
     [SerializeField] Camera targetCamera;
     [SerializeField] FitMode fitMode = FitMode.Letterbox;
@@ -38,8 +39,15 @@ public sealed class VideoBackground : MonoBehaviour
     RenderTexture texture;
     Transform quad;
     Material material;
+    static readonly int MaskTexProperty = Shader.PropertyToID("_MaskTex");
+    static readonly int MaskRectProperty = Shader.PropertyToID("_MaskRect");
+
     Transform foregroundQuad;
     Material foregroundMaterial;
+    Texture2D occluderAtlas;
+    bool foregroundMasked;
+    bool appliedMask;
+    Vector4 appliedMaskRect = new Vector4(0f, 0f, 1f, 1f);
     float halfWidth;
     float halfHeight;
     int laidOutWidth;
@@ -235,6 +243,14 @@ public sealed class VideoBackground : MonoBehaviour
     }
 
     /// <summary>
+    /// Silhouette atlas for occluders, baked by the analyzer. Optional.
+    /// </summary>
+    public void SetOccluderMask(Texture2D atlas)
+    {
+        occluderAtlas = atlas;
+    }
+
+    /// <summary>
     /// Re-draw a strip of the video in front of everything at z &lt; 0.
     /// </summary>
     /// <remarks>
@@ -242,11 +258,25 @@ public sealed class VideoBackground : MonoBehaviour
     /// visible effect is occluding the ball - which is how the ball passes
     /// *behind* a pole without any runtime segmentation. ``strip`` is in
     /// video-frame coordinates, (0,0) top-left.
+    ///
+    /// With a silhouette (``hasMask`` and a loaded atlas), only the object's
+    /// own pixels occlude: the ball slides behind the pole's outline instead
+    /// of vanishing at its detection rectangle. ``maskUv`` is the object's
+    /// cell in the atlas, GL convention.
     /// </remarks>
-    public void ShowForeground(Rect strip)
+    public void ShowForeground(Rect strip, Rect maskUv = default, bool hasMask = false)
     {
         if (texture == null)
         {
+            return;
+        }
+
+        // A sample authored WITH a silhouette must never degrade to the full
+        // rectangle just because the atlas failed to load - a rectangle bites
+        // a visible hole out of the ball. No occlusion is the safe failure.
+        if (hasMask && occluderAtlas == null)
+        {
+            HideForeground();
             return;
         }
 
@@ -262,13 +292,43 @@ public sealed class VideoBackground : MonoBehaviour
             var renderer = created.GetComponent<MeshRenderer>();
             renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             renderer.receiveShadows = false;
-            foregroundMaterial = new Material(ResolveShader());
+            // The masked shader degrades to the rectangle behavior when no
+            // atlas is bound (its default mask is solid white), so it serves
+            // both paths; the opaque background shader remains the fallback
+            // if it is somehow missing from the build.
+            Shader masked = Shader.Find(ForegroundShader);
+            foregroundMasked = masked != null;
+            foregroundMaterial = new Material(masked != null ? masked : ResolveShader());
             foregroundMaterial.mainTexture = texture;
             if (foregroundMaterial.HasProperty("_BaseMap"))
             {
                 foregroundMaterial.SetTexture("_BaseMap", texture);
             }
             renderer.sharedMaterial = foregroundMaterial;
+        }
+
+        if (foregroundMasked)
+        {
+            // Write only on change, same reason SetPlaybackSpeed does: this
+            // runs every frame a strip is visible, and re-assigning identical
+            // values reaches into the native material for nothing.
+            bool useMask = hasMask && occluderAtlas != null;
+            if (useMask != appliedMask)
+            {
+                appliedMask = useMask;
+                // A null texture reverts the property to its solid-white
+                // default: every pixel of the strip occludes - the rectangle.
+                foregroundMaterial.SetTexture(MaskTexProperty, useMask ? occluderAtlas : null);
+            }
+
+            Vector4 rect = useMask
+                ? new Vector4(maskUv.xMin, maskUv.yMin, maskUv.width, maskUv.height)
+                : new Vector4(0f, 0f, 1f, 1f);
+            if (rect != appliedMaskRect)
+            {
+                appliedMaskRect = rect;
+                foregroundMaterial.SetVector(MaskRectProperty, rect);
+            }
         }
 
         foregroundQuad.gameObject.SetActive(true);

@@ -44,6 +44,12 @@ public class VideoLevelData
     public List<VideoLevelHiddenSpan> hidden = new List<VideoLevelHiddenSpan>();
     public List<VideoLevelAmbientPoint> ambient = new List<VideoLevelAmbientPoint>();
     public List<VideoLevelForegroundBox> foreground = new List<VideoLevelForegroundBox>();
+
+    /// <summary>Grayscale atlas of occluder silhouettes, in StreamingAssets.</summary>
+    /// <remarks>Empty when the analyzer skipped the mask pass; occluders then
+    /// fall back to plain rectangles, which still read correctly because the
+    /// re-drawn pixels match the background exactly.</remarks>
+    public string foregroundMaskFile;
 }
 
 [Serializable]
@@ -101,15 +107,28 @@ public class VideoLevelSpeedPoint
 /// The re-drawn pixels are identical to the background beneath, so the only
 /// visible effect is the ball disappearing behind that strip - which is exactly
 /// what passing behind a pole looks like.
+///
+/// Samples sharing an <c>id</c> are sightings of the same physical object, so
+/// the game interpolates between them instead of snapping the strip from one
+/// pole to the next. When <c>mask</c> is set, u1..v2 point at the object's
+/// silhouette in the occluder atlas (GL convention, v up), and only silhouette
+/// pixels occlude - the ball slides behind the pole's actual outline rather
+/// than vanishing at its detection rectangle.
 /// </remarks>
 [Serializable]
 public class VideoLevelForegroundBox
 {
     public float d;
+    public int id;
     public float x1;
     public float y1;
     public float x2;
     public float y2;
+    public int mask;
+    public float u1;
+    public float v1;
+    public float u2;
+    public float v2;
 }
 
 [Serializable]
@@ -168,7 +187,12 @@ public enum VideoLevelEventType
 {
     Jump,
     Platform,
-    Dodge
+    Dodge,
+
+    /// <summary>A small automatic believability hop - a kerb, a level change.</summary>
+    /// <remarks>Never cued, scored, or missed: it fires like any scheduled
+    /// jump but the player is not asked to press for it.</remarks>
+    Hop
 }
 
 public static class VideoLevelEventTypes
@@ -183,6 +207,11 @@ public static class VideoLevelEventTypes
         if (string.Equals(value, "platform", StringComparison.OrdinalIgnoreCase))
         {
             return VideoLevelEventType.Platform;
+        }
+
+        if (string.Equals(value, "hop", StringComparison.OrdinalIgnoreCase))
+        {
+            return VideoLevelEventType.Hop;
         }
 
         return VideoLevelEventType.Jump;

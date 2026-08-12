@@ -51,10 +51,20 @@ public sealed class LevelDirector : MonoBehaviour
 
     [SerializeField] VehicleSpeedController vehicleSpeedController;
 
+    [Tooltip("Seconds to hold on the first frame before the run starts.")]
+    // The first moments after Play are the decoder's worst: buffers are cold
+    // and the clock runs ahead of the pictures, so the video looked frozen
+    // while the ball already moved - the "laggy on load" complaint. Holding
+    // paused on a delivered first frame, then starting, means play begins
+    // with the video and the ball moving together from the beginning.
+    [SerializeField] float startHold = 0.8f;
+
     VideoLevel level;
     float distance;
     float videoTime;
     bool finished;
+    bool started;
+    float firstFrameAt = -1f;
 
     // Seeking is asynchronous. Without tracking it, a large drift makes every
     // frame issue a fresh seek that cancels the one still in flight, so the
@@ -111,12 +121,48 @@ public sealed class LevelDirector : MonoBehaviour
         if (background != null)
         {
             background.Begin(level.PlaybackFileName);
+            LoadOccluderAtlas();
         }
 
         if (ResolvedMode == PlaybackMode.VehicleSpeed)
         {
             EnsureVehicleController();
         }
+    }
+
+    /// <summary>
+    /// Hand the occluder silhouette atlas to the background, when the level
+    /// ships one. Without it, occluders fall back to plain rectangles.
+    /// </summary>
+    void LoadOccluderAtlas()
+    {
+        string fileName = level.OccluderMaskFileName;
+        if (string.IsNullOrEmpty(fileName))
+        {
+            return;
+        }
+
+        byte[] bytes = VideoLevel.ReadStreamingAsset(fileName,
+            "The level names an occluder atlas; copy-to-unity.sh ships it.");
+        if (bytes == null)
+        {
+            return;
+        }
+
+        // Not readable/compressed like an imported asset: it is sampled as a
+        // plain alpha source, and LoadImage keeps it point-exact.
+        var atlas = new Texture2D(2, 2, TextureFormat.R8, false)
+        {
+            name = "OccluderAtlas",
+            wrapMode = TextureWrapMode.Clamp
+        };
+        if (!atlas.LoadImage(bytes))
+        {
+            Debug.LogError($"LevelDirector: could not decode occluder atlas '{fileName}'.");
+            return;
+        }
+
+        background.SetOccluderMask(atlas);
     }
 
     /// <summary>
@@ -186,6 +232,11 @@ public sealed class LevelDirector : MonoBehaviour
         }
 
         VideoPlayer player = background.Player;
+        if (!started && !HoldForStart(player))
+        {
+            return;
+        }
+
         if (!player.isPlaying)
         {
             player.Play();
@@ -216,6 +267,45 @@ public sealed class LevelDirector : MonoBehaviour
             player.Pause();
             LevelCompleted?.Invoke();
         }
+    }
+
+    /// <summary>
+    /// Hold at the clip's first frame until the decoder is genuinely ready.
+    /// </summary>
+    /// <returns>True once the run may begin.</returns>
+    /// <remarks>
+    /// Play is issued once so the decoder delivers frame 0, then the player is
+    /// paused on it for <see cref="startHold"/> seconds. Distance never
+    /// advances during the hold, so the ball stands at the start of the level
+    /// on a visible frame instead of climbing an invisible one.
+    /// </remarks>
+    bool HoldForStart(VideoPlayer player)
+    {
+        if (firstFrameAt < 0f)
+        {
+            if (player.frame < 0)
+            {
+                // No frame delivered yet: ask for one and keep waiting.
+                if (!player.isPlaying)
+                {
+                    player.Play();
+                }
+
+                return false;
+            }
+
+            player.Pause();
+            firstFrameAt = Time.unscaledTime;
+            return false;
+        }
+
+        if (Time.unscaledTime - firstFrameAt < startHold)
+        {
+            return false;
+        }
+
+        started = true;
+        return true;
     }
 
     void AdvanceDistance(float deltaTime)
@@ -347,6 +437,10 @@ public sealed class LevelDirector : MonoBehaviour
         distance = 0f;
         videoTime = 0f;
         finished = false;
+        // Restart re-runs the start hold: the seek back to frame 0 goes
+        // through the same cold path as the first load.
+        started = false;
+        firstFrameAt = -1f;
 
         if (background != null && background.IsPrepared)
         {

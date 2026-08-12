@@ -75,17 +75,57 @@ visible ground region, converts marker arcs into cues at the arc **start**
 (a tap is a takeoff) carrying the drawn **air time**, and **fits each jump's
 cue window from the detections** so any accepted tap clears its obstacle.
 
+### Occlusion (automatic — no timeline entry needed)
+
+The author pass also derives every place the ball should pass **behind** a
+foreground object, from one measurement: on a shared ground plane, an object
+whose detection-box base sits clearly below the ball's line is nearer the
+camera. Candidates near the ball's column are chained into per-object tracks
+(flicker dropped), each sighting is SAM-segmented into a silhouette, and the
+silhouettes ship as `out/CLIP.occluders.png` next to the level. In the game,
+a strip of the video is re-drawn in front of the ball through that silhouette,
+so the ball slides behind the pole's actual outline. Dodges, hidden spans and
+elevated surfaces (`rail`, `hedge` — the ball fronts what's beyond them)
+suppress derivation automatically.
+
+Overrides, only if the eyeball check disagrees with the measurement:
+
+- `"behindSpans": [{"from": s, "to": s}]` — force occlusion (e.g. a pole whose
+  base a parked car hides, making it read as farther than it is).
+- `"frontSpans": [{"from": s, "to": s}]` — suppress a misread box.
+- `"occluderLabels": ["pole", "traffic sign", "tree"]` — widen the class list
+  (default: pole, traffic sign).
+- `--no-occluder-masks` — skip the SAM pass; occluders degrade to rectangles,
+  which still read correctly (the re-drawn pixels match the background).
+
+Verify + eyeball check — `--verify` steps the whole level at video rate
+through the game's own strip logic (mirrored 1:1 from `VideoLevel.cs`) and
+fails if any frame erases ball pixels with no detected object in front, or if
+the atlas has any non-black texel outside a silhouette cell; the stills are
+the human acceptance test on top:
+
+```bash
+uv run analyze occluders /path/to/CLIP.mov --level out/CLIP.authored.json \
+    --detections out/CLIP.detections.json --verify -o out/CLIP.occluders
+```
+
 ## 5. Audit — the gate
 
 ```bash
 uv run analyze audit --level out/CLIP.authored.json \
     --surfaces out/CLIP.surfaces.npz --ledges out/CLIP.ledges.npz \
-    --detections out/CLIP.detections.json
+    --detections out/CLIP.detections.json \
+    --timeline timeline.json --video /path/to/CLIP.mov
 ```
 
 Non-zero exit on violations; each prints a time span, a signed margin, and
 what the evidence was. Fix causes (timeline times, hidden spans, marker), not
 symptoms, and re-run 4→5 until clean. Criteria: [AUDIT_CRITERIA.md](AUDIT_CRITERIA.md).
+
+`--video` arms the overlap check's picture analysis: box-test hits are
+confirmed against SAM silhouettes cut from the flagged frames themselves, so
+empty box corners (a hatchback's sloped tail) don't fail arcs that are
+visually clean. Without it the box verdict stands, erring toward flagging.
 
 ## 6. Into Unity
 

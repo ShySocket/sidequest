@@ -77,6 +77,38 @@ peak), window sized to fit, and the arc lengthened when the obstacle crosses
 slower than the drawn air time covers. Fitter must be ≥ as conservative as the
 audit (it uses the full marker diameter as radius, plus slack).
 
+## Check 2b — Overlap ("jumping over means never touching")
+
+Clearance asks "is the vault high enough to read"; this asks the harder
+question a frame-by-frame review asks: **does the ball's disk ever intersect
+the obstacle it clears — at takeoff, in flight, or on landing.** One grazed
+frame reads as a collision, and the audit walks every frame of every arc.
+
+- Scope: only the obstacle class the event's **label names** (`"sign"` →
+  traffic sign, `"car"/"van"/"suv"` → vehicles, `"people"` → person…). A lamp
+  pole standing *behind* the hedge shares a box base with the signs planted
+  *on* it; geometry cannot tell them apart, but the choreography names its
+  target.
+- Ball disk at 0.85× drawn radius (shading rolls off at the rim; mathematical
+  tangency doesn't read as touch), elliptical in frame units.
+- Exempt: ball **in front** (its resting line clearly below the box base —
+  "lands right in front of the car" is intent), and ball **behind a shipped
+  occluder** (the strip redraw is the design).
+- **A box hit is a candidate, not a verdict.** Detection rectangles overstate
+  the object — a hatchback's sloped tail leaves its box's top corner empty,
+  and most box hits are exactly such corner grazes. Each candidate is
+  confirmed against the object's **SAM silhouette from the frame itself**
+  (`analyze audit --video …`); only pixel hits count. On the first run this
+  killed 5 of 7 candidates and kept the 2 real ones.
+
+Fixing a real overlap, in order of preference: **take off earlier** (the van's
+hood reaches the column before the annotated moment — beating it costs
+nothing), **land later** (the parked car crosses the old landing spot —
+outlast it), raise the arc, or — when the obstacle is genuinely *nearer* than
+the ball's lane (base below its line) — let the **occlusion depth rule** put
+the ball behind it instead of pretending they never cross. Never fix it by
+shrinking the ball or nudging the path off its measured line.
+
 ## Check 3 — Dodge ("moving aside makes sense")
 
 A dodge is a **lane change toward the camera**: the ball steps down
@@ -96,6 +128,45 @@ Violations: any single-frame step > 3 % of the drawn diameter, or the total
 range outside 0.7–1.35× drawn. Exempt: hidden spans (invisible balls can't look
 wrong) and jump arcs (the landing spot's depth arriving is a smooth ramp).
 
+## Check 5 — Occlusion ("behind means behind")
+
+Occluders are *derived*, not authored (`occlude.py`): an object whose detection
+box base sits **clearly below the ball's resting line** (≥ `DEPTH_MARGIN =
+0.03` fh) is nearer the camera — same ground plane, lower is closer — and the
+ball passes behind it. The audit re-checks every shipped occluder sample from
+the level file outward:
+
+- **Depth**: box base ≥ ball's line + margin (− 0.02 slack). The reference is
+  the ball's own path line, *not* the per-frame segmented line — a parked car
+  notches the segmented line toward the camera, and that must not un-earn a
+  pole the ball plainly fronts. Support (Check 1) already ties the path to
+  footage evidence; this closes the loop without re-measuring through noise.
+- **Proximity**: strip centre within `REACH + 0.1` of the ball's column — a
+  strip far from the ball occludes nothing and means the tracker drifted.
+- **Coherence**: ≥ 2 sightings per track (one is flicker) and centre steps
+  ≤ `MAX_CENTER_STEP` between samples (a bigger jump is two objects chained,
+  which the game would render as one strip sweeping the gap).
+- **Choreography**: no samples during dodges (a dodge steps *in front* of the
+  sign — occluding behind it would undo the move) or hidden spans, unless a
+  timeline `behindSpans` override forces them.
+- **Masks**: uv rects sane, and the atlas the level names ships next to it.
+
+The deeper game-side contract — *behind a real object, or invisible* — is
+checked by `analyze occluders --verify`, which mirrors the game's strip
+lookup 1:1 (interpolation within a track; past a track's end the last
+sighting may linger only **half its own sample spacing**; a ball-overlap
+gate) and rasterizes which ball pixels the silhouette actually erases,
+demanding each lie inside a current detection box. It also requires every
+atlas texel outside a silhouette cell to be black: black occludes nothing,
+and bilinear sampling bleeds cell borders into the strip, so anything else
+bites a clean-edged notch out of the ball with nothing visibly in front.
+
+Derivation-side rules the audit leans on: elevated surfaces (`rail`, `hedge`)
+suppress occlusion entirely — furniture the designer put the ball on lines the
+near edge of the shot, and no depth test against an invisible footing can
+prove otherwise; `frontSpans` suppresses a misread box; `occluderLabels`
+widens the class list per clip.
+
 ---
 
 ## Threshold table
@@ -111,7 +182,13 @@ wrong) and jump arcs (the landing spot's depth arriving is a smooth ramp).
 | widthFactor floor | 0.45 @ ≤0.027 fw | poles aren't vans |
 | dodge step | 0.09 fh | visible lane change |
 | size step | 3 %/frame | ≈0.5 % of screen height — imperceptible |
-| height clamp | 0.12–0.50 fh | on-screen, non-trivial |
+| height clamp | 0.12–0.50 fh (derived arcs) / 0.05–0.80 (authored) | authored cues are audited, not re-clamped: clearing frame-tall people takes 0.55 |
+| overlap radius | 0.85× drawn | rim shading; tangency doesn't read as touch |
+| in-front margin | ball line > base + 0.03 fh | nearer the camera, no contact possible |
 | airTime clamp | 0.6–3.4 s | playable, matches drawn arcs |
+| DEPTH_MARGIN | 0.03 fh | "clearly below": a wrongly swallowed ball reads worse than a wrongly fronted one |
+| REACH | 0.25 fw | strip is invisible anyway; wide reach keeps fast near poles trackable |
+| MAX_CENTER_STEP | 0.18 fw | fastest genuine mover measured was 0.16 between sightings |
+| MIN_TRACK_SECONDS | 0.15 s | two sightings at detection stride 5 |
 
 fh = frame heights, fw = frame widths, obh = obstacle height above ground.

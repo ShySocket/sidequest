@@ -10,6 +10,17 @@ the event's window clears it; a miss flashes the ball red and the arc plays out
 anyway. This keeps the motion exactly what was audited frame by frame, while the
 game stays a game.
 
+A third event type, `hop`, is pure choreography: a small automatic hop at a
+level change (a kerb, the raised platform at 16.35s) that is never cued,
+scored, or missed — it exists to make a step in the ground line read as a
+move rather than a glitch.
+
+**The run starts when the video does.** Right after Play a video decoder's
+clock runs ahead of its pictures, which used to read as a frozen frame with
+the ball already climbing. The director now waits for the first delivered
+frame, holds on it briefly, and then starts — ball and footage moving
+together from the beginning. Restart re-runs the same hold.
+
 Separate from `RunnerPrototype`, which is untouched.
 
 ## Run it
@@ -220,10 +231,12 @@ invisible), the miss is counted, and the choreographed arc happens regardless.
 
 **Windows and warning leads are derived, not hand-tuned.** At authoring time
 each event's scoring window is `clamp(0.8 × the smaller neighbouring gap, 0.24,
-0.7)` seconds and its HUD warning lead is `clamp(0.7 × the gap before it, 0.35,
-0.55)` — so an isolated jump is forgiving with an early warning, while the tight
-hedge chain at 25.88/26.30 gets correspondingly tight windows. Both ship in the
-level file per event (`windowSeconds`, `lead`).
+0.7)` seconds and its HUD warning lead is `clamp(0.7 × the gap before it, 0.45,
+0.9)` — so an isolated jump is forgiving with a genuinely playable warning,
+while the tight hedge chain gets correspondingly tight windows. Hops are
+invisible to this derivation (they are not played, so they must not shrink a
+neighbour's window). Both ship in the level file per event (`windowSeconds`,
+`lead`).
 
 **The ball passes behind foreground poles.** The level carries the detection
 boxes of poles the ball's column crosses during marked spans; the game re-draws
@@ -292,6 +305,12 @@ gate. Three guarantees, currently all clean at 99.7% measurable support:
   crosses the column. Only the obstacle *owning* the arc is checked (within
   0.55 s of the peak), and the first and last 0.12 s are exempt — "land right
   after the car" is the authored intent, not a violation.
+- **Overlap** — no frame of any arc may show the ball's disk intersecting the
+  obstacle its label names, at takeoff, in flight, or on landing. Box hits are
+  confirmed against SAM silhouettes from the frames themselves
+  (`analyze audit --video`), because a detection rectangle's corners are empty
+  pixels. Exempt: the ball in front of the obstacle (nearer the camera), or
+  behind a shipped occluder strip.
 - **Dodge** — each dodge cue has a real sign crossing the column, and the dodge
   is a visible lane change: a step toward the camera, the ball growing as it
   nears, passing in front of the sign.
