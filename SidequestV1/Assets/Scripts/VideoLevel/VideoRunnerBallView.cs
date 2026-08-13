@@ -378,9 +378,12 @@ public sealed class VideoRunnerBallView : MonoBehaviour
 
     void SetVisible(bool visible)
     {
-        if (ballRenderer != null && ballRenderer.enabled && !visible && ball != null)
+        // Both edges of a hidden span get a puff: vanishing without one reads
+        // as a bug, and popping back in reads no better. The parent transform
+        // keeps following the path while hidden, so on the way back in the
+        // ball's world position is already the right spot.
+        if (ballRenderer != null && ballRenderer.enabled != visible && ball != null)
         {
-            // Going hidden: puff out where the ball stood.
             PlayPoof(ball.position, ball.localScale.x);
         }
 

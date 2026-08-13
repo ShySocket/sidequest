@@ -20314,16 +20314,16 @@
    "id": 0,
    "type": "jump",
    "label": "car",
-   "time": 6.41,
-   "distance": 1088.085,
+   "time": 7.15,
+   "distance": 1227.015,
    "window": 0.7,
-   "height": 0.3,
-   "airTime": 2.2,
+   "height": 0.33,
+   "airTime": 1.4,
    "windowSeconds": 0.7,
    "lead": 0.9,
    "duration": 0.0,
    "source": "timeline",
-   "windowDistance": 59.889
+   "windowDistance": 82.328
   },
   {
    "id": 1,

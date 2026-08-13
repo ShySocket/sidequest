@@ -52,12 +52,12 @@
  ],
  "events": [
   {
-   "time": 6.41,
+   "time": 7.15,
    "type": "jump",
    "label": "car",
-   "height": 0.3,
-   "airTime": 2.2,
-   "_why": "the car crosses the old landing spot until ~8.5s; landing at 8.61 is the first clear ground, and the same arc carries the rail-to-road drop"
+   "height": 0.33,
+   "airTime": 1.4,
+   "_why": "gravity-exact (T = 2.44*sqrt(h)); the old 6.41/2.2s arc hung at its apex 64% longer than gravity allows. The ball rolls the rail while the car passes beneath its line, vaults as it crosses (7.3-8.5), and lands at 8.55 right behind it - the same arc still carries the rail-to-road drop"
   },
   {
    "time": 9.45,
