@@ -90,6 +90,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     float smoothedColumn = -1f;
     float columnVelocity;
     float dodgeElapsed = -1f;
+    float activeDodgeDuration;
     float lastVideoTime = -1f;
     int cleared;
     int missed;
@@ -271,7 +272,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         if (stance == Stance.Dodging)
         {
             dodgeElapsed += deltaTime;
-            if (dodgeElapsed >= dodgeDuration)
+            if (dodgeElapsed >= ActiveDodgeDuration())
             {
                 dodgeElapsed = -1f;
                 stance = Stance.Grounded;
@@ -320,6 +321,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                 if (state.Type == VideoLevelEventType.Dodge)
                 {
                     dodgeElapsed = 0f;
+                    activeDodgeDuration = state.Event.duration;
                     stance = Stance.Dodging;
                 }
                 else
@@ -379,6 +381,12 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         verticalVelocity = 4f * activeJumpHeight / Mathf.Max(ArcDuration(), 0.01f);
         airHeight = 0.0001f;
         stance = Stance.Airborne;
+    }
+
+    /// <summary>Seconds the dodge in progress takes: the cue's own, or the tuned default.</summary>
+    float ActiveDodgeDuration()
+    {
+        return activeDodgeDuration > 0f ? activeDodgeDuration : dodgeDuration;
     }
 
     /// <summary>Take-off speed of the jump in progress, for normalizing stretch.</summary>
@@ -456,7 +464,8 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             // the ball as it comes nearer, which is what sells the sidestep.
             // The ball then passes in front of the sign. Out and back, so it
             // returns to its lane on its own.
-            float phase = Mathf.Sin(Mathf.PI * Mathf.Clamp01(dodgeElapsed / dodgeDuration));
+            float phase = Mathf.Sin(
+                Mathf.PI * Mathf.Clamp01(dodgeElapsed / ActiveDodgeDuration()));
             groundY += dodgeDepth * phase;
             column += dodgeDistance * phase * -heading;
         }

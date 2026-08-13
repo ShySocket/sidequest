@@ -114,6 +114,17 @@ public sealed class VideoRunnerBallView : MonoBehaviour
     float flashUntil = -1f;
     float flashDuration = 1f;
 
+    // The disappearance poof: a soft puff that expands and fades where the
+    // ball just was, so vanishing into a hidden span reads as an exit rather
+    // than a glitch.
+    Transform poof;
+    Renderer poofRenderer;
+    Material poofMaterial;
+    MaterialPropertyBlock poofProperties;
+    float poofStartedAt = -1f;
+    float poofDiameter;
+    const float PoofSeconds = 0.45f;
+
     Color appliedAmbient = Color.clear;
     float appliedLuma = -1f;
     Color baseBase;
@@ -139,6 +150,7 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         }
 
         SetVisible(!pose.Hidden);
+        UpdatePoof();
         if (pose.Hidden)
         {
             return;
@@ -366,6 +378,12 @@ public sealed class VideoRunnerBallView : MonoBehaviour
 
     void SetVisible(bool visible)
     {
+        if (ballRenderer != null && ballRenderer.enabled && !visible && ball != null)
+        {
+            // Going hidden: puff out where the ball stood.
+            PlayPoof(ball.position, ball.localScale.x);
+        }
+
         if (ballRenderer != null)
         {
             ballRenderer.enabled = visible;
@@ -374,6 +392,78 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         if (blobShadowRenderer != null)
         {
             blobShadowRenderer.enabled = visible;
+        }
+    }
+
+    /// <summary>Start the disappearance puff at a world position.</summary>
+    void PlayPoof(Vector3 position, float diameter)
+    {
+        if (poof == null)
+        {
+            GameObject quad = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            quad.name = "Poof";
+            Destroy(quad.GetComponent<Collider>());
+            quad.transform.SetParent(transform, false);
+            poof = quad.transform;
+            poofRenderer = quad.GetComponent<MeshRenderer>();
+            // The blob-shadow shader is already a soft-edged disc; tinted
+            // and faded out, it reads as a dust puff. Mid-grey, not white:
+            // the footage is bright daylight, and a light puff vanished into
+            // the sunlit wall - smoke against a bright scene reads DARKER.
+            poofMaterial = LoadMaterial("Sidequest/BlobShadow");
+            if (poofMaterial != null)
+            {
+                poofMaterial.SetColor("_Color", new Color(0.30f, 0.28f, 0.26f));
+                // A firmer edge than the contact shadow: the shadow wants to
+                // melt into the ground, the poof wants to read as a thing.
+                poofMaterial.SetFloat("_Falloff", 0.8f);
+            }
+
+            poofRenderer.sharedMaterial = poofMaterial;
+            poofRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            poofRenderer.receiveShadows = false;
+        }
+
+        // Just in front of the ball's plane, so nothing hides the puff.
+        poof.position = position + Vector3.back * 0.05f;
+        poofDiameter = diameter;
+        poofStartedAt = Time.time;
+        poofRenderer.enabled = true;
+    }
+
+    void UpdatePoof()
+    {
+        if (poofRenderer == null || !poofRenderer.enabled)
+        {
+            return;
+        }
+
+        float phase = (Time.time - poofStartedAt) / PoofSeconds;
+        if (phase >= 1f)
+        {
+            poofRenderer.enabled = false;
+            return;
+        }
+
+        // Expands fast then coasts, fading as it grows - the shape of a
+        // real dust puff, which spends its energy immediately. Sized well
+        // past the ball: the soft falloff eats the edges, and a puff the
+        // ball's own size disappeared into the footage.
+        float ease = 1f - (1f - phase) * (1f - phase);
+        float scale = poofDiameter * Mathf.Lerp(1.4f, 3.2f, ease);
+        poof.localScale = new Vector3(scale, scale, 1f);
+
+        poofProperties ??= new MaterialPropertyBlock();
+        poofRenderer.GetPropertyBlock(poofProperties);
+        poofProperties.SetFloat(OpacityId, 0.85f * (1f - ease));
+        poofRenderer.SetPropertyBlock(poofProperties);
+    }
+
+    void OnDestroy()
+    {
+        if (poofMaterial != null)
+        {
+            Destroy(poofMaterial);
         }
     }
 }

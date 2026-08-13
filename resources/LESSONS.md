@@ -131,6 +131,23 @@ time each one cost.
   scripted `hop` (auto, uncued, unscored) at the step is what makes the
   change legible. Corollary: never prompt the player for one — a press that
   scores nothing teaches the wrong lesson.
+- **Air time comes from gravity, not from the obstacle alone.** T ≈
+  k·√(height) with k calibrated once from an accepted jump (~2.4 s per √frame-
+  height on this clip). An arc stretched to outlast a crossing without raising
+  its height reads as moon-float — the 2.6 s people jump was "awkward" until
+  it became 1.9 s at a taller peak. When a crossing demands more hang than
+  gravity gives that height, raise the peak or move the takeoff; never just
+  slow the fall.
+- **Occlude with the thinnest thing that qualifies.** A ball slipping behind
+  a sign post reads right; the same ball swallowed by a car-wide strip reads
+  as rolling *under* the car — even when the car really is nearer. And an
+  occluder mid-arc where the ball plainly sails **above** the object
+  (the grey car at 8 s) makes the landing flicker behind-then-in-front.
+  Preference order: pole/sign over vehicle; suppress entirely where the arc
+  goes over the top.
+- **Exits need punctuation.** A ball that ceases to render reads as a bug; a
+  0.45 s expanding, fading puff at the same spot reads as a character leaving
+  the stage. Any authored disappearance should spend a few frames saying so.
 - **Some "obstacles" are depth stories, not jumps.** When the thing the ball
   grazes is *nearer the camera* than the ball's lane (box base clearly below
   the resting line), no arc geometry fixes the overlap — the honest render is

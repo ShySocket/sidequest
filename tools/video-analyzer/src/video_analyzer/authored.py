@@ -386,6 +386,9 @@ def build_authored_level(
                 # press-only-scores design.
                 "windowSeconds": round(window, 3),
                 "lead": round(float(entry.get("lead", 0.55)), 3),
+                # Dodges may carry their own duration ("do not make it too
+                # quick"); zero means the game's tuned default.
+                "duration": round(float(entry.get("duration", 0.0)), 3),
                 "source": entry.get("source", "timeline"),
                 # Half-width in distance, not seconds: the game tracks distance,
                 # and a fixed number of seconds would be a different amount of

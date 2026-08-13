@@ -15,6 +15,13 @@ level change (a kerb, the raised platform at 16.35s) that is never cued,
 scored, or missed — it exists to make a step in the ground line read as a
 move rather than a glitch.
 
+**Air times obey gravity.** T ≈ k·√height, with k calibrated once from an
+accepted jump — an arc stretched to outlast an obstacle without gaining
+height reads as moon-float. Dodges may carry their own `duration` (the 57.3s
+stop-sign step is deliberately unhurried). When the ball enters a hidden
+span it leaves with a puff — a soft disc that expands and fades where it
+stood — because ceasing to render reads as a bug, not an exit.
+
 **The run starts when the video does.** Right after Play a video decoder's
 clock runs ahead of its pictures, which used to read as a frozen frame with
 the ball already climbing. The director now waits for the first delivered
@@ -242,6 +249,9 @@ neighbour's window). Both ship in the level file per event (`windowSeconds`,
 boxes of poles the ball's column crosses during marked spans; the game re-draws
 that strip of the video in front of the ball. The pixels are identical to the
 background, so the only visible effect is the ball sliding behind the pole.
+Occluders prefer the thinnest thing that qualifies — a ball behind a sign post
+reads right, while a car-wide strip reads as rolling *under* the car — and are
+suppressed where an arc plainly goes over the top of the object.
 
 ## Playback modes
 

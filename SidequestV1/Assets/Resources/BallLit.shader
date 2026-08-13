@@ -15,19 +15,25 @@ Shader "Sidequest/BallLit"
     // A black ball has almost no diffuse response, so what actually reads as
     // three-dimensional is the specular highlight and the fresnel rim. Those
     // carry the shading here; the albedo is nearly zero by design.
+    // Tuned to the clip's golden-hour light: a low warm sun (the long shadows
+    // fall right and toward the camera), a cool blue sky fill on the shadow
+    // side, and warm concrete bounce from below. The specular is tight and
+    // restrained - a big soft glint read as studio plastic, while a small hot
+    // one reads as sun on rubber - and the base colour is very dark grey
+    // rather than pure black, because nothing physical reflects nothing.
     Properties
     {
-        _BaseColor      ("Base Colour", Color)          = (0.02, 0.02, 0.025, 1)
-        _LightDirection ("Light Direction", Vector)     = (0.55, -0.75, 0.35, 0)
-        _LightColor     ("Light Colour", Color)         = (1.0, 0.94, 0.82, 1)
-        _SkyColor       ("Ambient Sky", Color)          = (0.35, 0.42, 0.55, 1)
-        _GroundColor    ("Ambient Ground", Color)       = (0.28, 0.24, 0.18, 1)
-        _SpecColor      ("Specular Colour", Color)      = (1.0, 0.96, 0.88, 1)
-        _Smoothness     ("Smoothness", Range(0, 1))     = 0.82
-        _SpecStrength   ("Specular Strength", Range(0, 4)) = 1.6
-        _RimColor       ("Rim Colour", Color)           = (0.55, 0.62, 0.75, 1)
-        _RimPower       ("Rim Power", Range(0.5, 8))    = 3.5
-        _RimStrength    ("Rim Strength", Range(0, 2))   = 0.7
+        _BaseColor      ("Base Colour", Color)          = (0.035, 0.034, 0.038, 1)
+        _LightDirection ("Light Direction", Vector)     = (0.55, -0.65, 0.35, 0)
+        _LightColor     ("Light Colour", Color)         = (1.05, 0.92, 0.72, 1)
+        _SkyColor       ("Ambient Sky", Color)          = (0.30, 0.40, 0.58, 1)
+        _GroundColor    ("Ambient Ground", Color)       = (0.34, 0.28, 0.20, 1)
+        _SpecColor      ("Specular Colour", Color)      = (1.0, 0.94, 0.82, 1)
+        _Smoothness     ("Smoothness", Range(0, 1))     = 0.88
+        _SpecStrength   ("Specular Strength", Range(0, 4)) = 1.2
+        _RimColor       ("Rim Colour", Color)           = (0.60, 0.64, 0.72, 1)
+        _RimPower       ("Rim Power", Range(0.5, 8))    = 4.0
+        _RimStrength    ("Rim Strength", Range(0, 2))   = 0.5
     }
 
     SubShader
@@ -95,7 +101,10 @@ Shader "Sidequest/BallLit"
             float hemisphere = saturate(N.y * 0.5 + 0.5);
             float3 ambient = lerp(_GroundColor.rgb, _SkyColor.rgb, hemisphere);
 
-            float diffuse = saturate(dot(N, L));
+            // Wrapped diffuse: outdoor light is never a point source - sky
+            // and bounce soften the terminator, and a hard day/night line
+            // across a small ball is what reads as "rendered".
+            float diffuse = saturate((dot(N, L) + 0.25) / 1.25);
             float3 colour = _BaseColor.rgb * (ambient + _LightColor.rgb * diffuse);
 
             float exponent = exp2(_Smoothness * 11.0) + 2.0;

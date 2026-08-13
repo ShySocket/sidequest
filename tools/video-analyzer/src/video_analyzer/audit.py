@@ -520,6 +520,14 @@ class LevelAuditor:
                 if keyword in label:
                     classes = (classes or set()) | mapped
 
+            # An arc that names no obstacle ("off the hedge", the level-change
+            # hops) clears nothing, so there is nothing it must not touch -
+            # and bystanders like a sign post standing BEHIND the hedge would
+            # otherwise accuse it (their bases are hidden, so depth cannot
+            # exonerate them).
+            if classes is None:
+                continue
+
             height, duration = self.arc(event.get("height", 0.0), event.get("airTime", 0.0))
             takeoff = float(event["time"])
 

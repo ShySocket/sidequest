@@ -90,12 +90,12 @@
    "_why": "annotated landing on the sidewalk at 18.62"
   },
   {
-   "time": 23.1,
+   "time": 23.2,
    "type": "jump",
    "label": "people",
-   "height": 0.55,
-   "airTime": 2.6,
-   "_why": "the group is nearly frame-tall; the first woman crosses at 23.65 and the tall man at 24.35-24.6, so the arc peak is centred on him and takeoff beats her - measured frame by frame for zero overlap"
+   "height": 0.66,
+   "airTime": 1.9,
+   "_why": "natural gravity: a ~2.4m leap takes ~1.7-1.9s, and 2.6s read as moon-float; takeoff 23.2 still beats the first woman, peak still centred on the tall man, lands 25.1"
   },
   {
    "time": 25.88,
@@ -106,20 +106,28 @@
    "_why": "the hedge's leading end only reaches the column at ~26.55; landing before that hovered over sidewalk pixels. One arc lands 26.63 on the hedge proper and clears the end sign crossing at 26.35-26.5"
   },
   {
-   "time": 27.42,
+   "time": 27.3,
    "type": "jump",
    "label": "sign, on bush",
-   "height": 0.26,
-   "airTime": 0.65,
-   "_why": "this sign crosses the column at 27.65-27.85 (annotated as approaching at 27.36); peak centred on the crossing"
+   "height": 0.3,
+   "airTime": 0.8,
+   "_why": "fully above the sign top through its 27.65-27.85 crossing, landing 28.1 midway between this sign and the next"
   },
   {
-   "time": 28.22,
+   "time": 28.2,
    "type": "jump",
    "label": "sign, on bush",
-   "height": 0.26,
-   "airTime": 0.62,
-   "_why": "crossing measured 28.42-28.62; the old 28.10/0.55 arc landed exactly on the sign"
+   "height": 0.3,
+   "airTime": 0.65,
+   "_why": "fully above the sign through 28.42-28.62, landing 28.85 on the hedge before its end"
+  },
+  {
+   "time": 29.2,
+   "type": "jump",
+   "label": "off the hedge",
+   "height": 0.18,
+   "airTime": 0.6,
+   "_why": "a deliberate leap off the hedge onto the lot, replacing the eased slide - annotated as more believable"
   },
   {
    "time": 31.0,
@@ -143,6 +151,12 @@
    "_why": "the near black car's roof is over the old 34.0 takeoff; starting 0.15s earlier clears it, landing 35.47 annotated exact"
   },
   {
+   "time": 37.1,
+   "type": "dodge",
+   "label": "pole",
+   "_why": "annotated: same dodge as the 32.7 pole; the pole crosses the column at 37.2-37.5"
+  },
+  {
    "time": 40.71,
    "type": "jump",
    "label": "car",
@@ -150,16 +164,19 @@
    "airTime": 1.64
   },
   {
-   "time": 46.71,
+   "time": 47.05,
    "type": "jump",
    "label": "chain",
    "height": 0.12,
-   "airTime": 0.34
+   "airTime": 0.34,
+   "_why": "the FRONT chain - annotated as jumped at 47.05; the old 46.71 takeoff hopped the far one"
   },
   {
-   "time": 56.0,
+   "time": 57.32,
    "type": "dodge",
-   "label": "stop sign"
+   "label": "stop sign",
+   "duration": 0.9,
+   "_why": "the DO NOT ENTER sign crosses at ~57.3-57.6; annotated 57.32, and an unhurried step reads better than the default quick one"
   },
   {
    "time": 77.0,
@@ -176,7 +193,7 @@
  ],
  "hidden": [
   {
-   "from": 58.5,
+   "from": 58.3,
    "to": 75.0
   }
  ],
@@ -184,8 +201,8 @@
   {
    "from": 19.39,
    "to": 23.4,
-   "dy": 0.05,
-   "_why": "roll along the middle of the sidewalk, a bit in front"
+   "dy": 0.09,
+   "_why": "ride the middle of the sidewalk with the whole ball against concrete - at +0.05 its upper half sat against the grasses and read as rolling in the greenery"
   },
   {
    "from": 24.9,
@@ -196,8 +213,8 @@
   {
    "from": 41.9,
    "to": 43.6,
-   "dy": -0.03,
-   "_why": "land beside the parked car at 42.35, on the lot pavement next to it - the old -0.09 floated the ball above and read as behind it"
+   "dy": 0.02,
+   "_why": "land a touch forward, beside the parked van on the lot; jumping 'too far back' read unnatural"
   },
   {
    "from": 84.5,
@@ -207,11 +224,6 @@
   }
  ],
  "behindSpans": [
-  {
-   "from": 37.05,
-   "to": 37.65,
-   "_why": "a near pole sweeps the column at 37.2-37.5 while the ball rolls; it should pass visibly behind it"
-  },
   {
    "from": 40.6,
    "to": 42.5,
@@ -240,6 +252,11 @@
    "from": 29.0,
    "to": 31.0,
    "_why": "the slide off the hedge happens in front of the bush and its signs - nothing may occlude it"
+  },
+  {
+   "from": 7.4,
+   "to": 9.2,
+   "_why": "the ball just goes ABOVE the grey car; the derived occluder made the landing flicker behind-then-in-front of it"
   }
  ],
  "surfaceOffsets": {

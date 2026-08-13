@@ -289,7 +289,16 @@ def derive_occluder_tracks(
                 y2=min(1.0, y2 + config.pad_y),
                 label=det.label,
             )
-            if best is None or abs(candidate.center - column) < abs(best.center - column):
+            # Thin street furniture beats vehicles: a ball slipping behind a
+            # sign post reads right, while a ball swallowed by a car-wide
+            # strip reads as rolling UNDER the car (measured on the 54.2s
+            # sign, where a parked-van box outcompeted it on distance alone).
+            # Vehicles still occlude where nothing thinner qualifies - the
+            # van's tall tail at 11.1s.
+            thin = candidate.label in ("pole", "traffic sign")
+            best_thin = best is not None and best.label in ("pole", "traffic sign")
+            closer = best is None or abs(candidate.center - column) < abs(best.center - column)
+            if best is None or (thin and not best_thin) or (thin == best_thin and closer):
                 best = candidate
 
         if best is not None:

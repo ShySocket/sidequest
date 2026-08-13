@@ -88,7 +88,9 @@ frame reads as a collision, and the audit walks every frame of every arc.
   traffic sign, `"car"/"van"/"suv"` → vehicles, `"people"` → person…). A lamp
   pole standing *behind* the hedge shares a box base with the signs planted
   *on* it; geometry cannot tell them apart, but the choreography names its
-  target.
+  target. An arc that names no obstacle ("off the hedge", the level-change
+  hops) clears nothing and checks nothing — bystanders with hidden bases
+  would otherwise accuse it.
 - Ball disk at 0.85× drawn radius (shading rolls off at the rim; mathematical
   tangency doesn't read as touch), elliptical in frame units.
 - Exempt: ball **in front** (its resting line clearly below the box base —

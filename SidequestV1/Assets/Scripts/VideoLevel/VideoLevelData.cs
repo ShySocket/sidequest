@@ -171,6 +171,11 @@ public class VideoLevelEvent
     /// </remarks>
     public float airTime;
 
+    /// <summary>Dodge only: seconds the sidestep takes. Zero = tuned default.</summary>
+    /// <remarks>The 57.3s stop-sign dodge was annotated "do not make it too
+    /// quick", so a dodge can carry its own pace.</remarks>
+    public float duration;
+
     public string source;
 }
 
