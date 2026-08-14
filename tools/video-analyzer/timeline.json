@@ -30,8 +30,9 @@
    "surface": "floor"
   },
   {
-   "from": 19.39,
-   "surface": "sidewalk"
+   "from": 18.55,
+   "surface": "sidewalk",
+   "_why": "the suv jump is annotated 'landing on the sidewalk at 18.62' - with the handover at 19.39 the ball landed on the floor line and rolled the lot's curb for 0.8s before the sidewalk took over. Handing over just before touchdown makes the landing spot and the roll-out the sidewalk plane itself"
   },
   {
    "from": 26.6,
@@ -85,9 +86,9 @@
    "time": 17.0,
    "type": "jump",
    "label": "suv",
-   "height": 0.44,
+   "height": 0.48,
    "airTime": 1.62,
-   "_why": "annotated landing on the sidewalk at 18.62"
+   "_why": "annotated landing on the sidewalk at 18.62. Height 0.48 (was 0.44): the drawn 0.44 was calibrated when lift rode the live line, which rises 0.05 toward the walkway mid-arc - the accepted look. The parabola measures height above the take-off line, so 0.48 restores the same apex over the suv; gravity still holds (2.44*sqrt(0.48) = 1.69 >= 1.62)"
   },
   {
    "time": 23.2,

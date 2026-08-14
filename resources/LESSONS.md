@@ -181,6 +181,10 @@ time each one cost.
   line. Flat landings (`d=0`) reduce to the old constants exactly, so only
   the arcs that were wrong changed. Size (not position) still eases across
   the descent — depth is a fact, not physics, and easing it is invisible.
+  Corollary: a `height` accepted under the old model was calibrated against
+  the live line, not the take-off line — where the line rose mid-arc (the
+  17.0s suv), the same number now flies lower, and restoring the accepted
+  look means re-deriving the height (0.44 → 0.48), not re-easing the arc.
 - **The clearance check must exempt what a shipped occluder strip covers.**
   The overlap check always did; clearance didn't, and passed the 40.71s arc
   against a near-plane lamppost by a 0.004 margin of luck — any honest change
