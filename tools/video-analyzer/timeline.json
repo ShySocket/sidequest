@@ -212,10 +212,10 @@
    "_why": "hold the sidewalk axis all the way to the people: the measured line drifts up 0.05 across 22.2-23.2 (toward the corner grass bed) and at 22.7 the ball read as rolling in the greenery again. Stacked on the span above this keeps the line at ~0.92-0.95 - the same height it rides at 21.0-21.9 and the plane the people stand on - so the approach is one level axis"
   },
   {
-   "from": 24.9,
-   "to": 25.8,
-   "dy": 0.05,
-   "_why": "land parallel to the people and the bushes, not visibly behind them"
+   "from": 24.55,
+   "to": 26.35,
+   "dy": 0.135,
+   "_why": "the ball lands at 25.1 on the SAME axis it approached on - the 0.92 sidewalk plane the people stand on - so its distance from the camera is unchanged across the jump. The old +0.05 span started at the touchdown itself (only half ramped-in at 25.1, landing the ball at 0.80, visibly farther than the people) and expired at 25.8, before the 25.88 bush takeoff it should carry. This one is full from 24.95 (mid-flight, invisible) through the landing, the roll, and the bush takeoff, and fades out during the bush arc (airborne, invisible); the hedge landing at 26.63 lies beyond it untouched"
   },
   {
    "from": 41.9,
