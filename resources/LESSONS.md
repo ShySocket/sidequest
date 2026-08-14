@@ -190,6 +190,15 @@ time each one cost.
   same frames must share their exemption lists, or a fix in one geometry
   surfaces phantom violations in the other.
 
+- **A pathAdjust must outlive the moment it protects.** Spans ramp out over
+  0.4s before `to`, so an adjust ending at a takeoff fades exactly while it
+  is still holding the ball on its surface — the 19.39-23.4 sidewalk nudge
+  expired across 23.0-23.4 and climbed the ball onto the grass right at the
+  23.2 people jump. End the span after the ball leaves the ground (23.6):
+  the fade then happens mid-arc, where the live line is invisible. Corollary:
+  when a rolled surface reads wrong near a takeoff, check the adjust's
+  ramp-out before blaming the measured line.
+
 ## Process
 
 - **Verify every scripted edit.** Two `str.replace` patches silently no-op'd

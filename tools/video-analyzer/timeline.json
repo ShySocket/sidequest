@@ -200,9 +200,15 @@
  "pathAdjust": [
   {
    "from": 19.39,
-   "to": 23.4,
+   "to": 23.6,
    "dy": 0.09,
-   "_why": "ride the middle of the sidewalk with the whole ball against concrete - at +0.05 its upper half sat against the grasses and read as rolling in the greenery"
+   "_why": "ride the middle of the sidewalk with the whole ball against concrete - at +0.05 its upper half sat against the grasses and read as rolling in the greenery. Ends 23.6 (not 23.4): the 0.4s ramp-out was fading this exact correction across 23.0-23.4, right at the 23.2 people takeoff, climbing the ball back onto the grass; at 23.6 the ball is airborne and the fade is invisible"
+  },
+  {
+   "from": 21.6,
+   "to": 23.6,
+   "dy": 0.045,
+   "_why": "hold the sidewalk axis all the way to the people: the measured line drifts up 0.05 across 22.2-23.2 (toward the corner grass bed) and at 22.7 the ball read as rolling in the greenery again. Stacked on the span above this keeps the line at ~0.92-0.95 - the same height it rides at 21.0-21.9 and the plane the people stand on - so the approach is one level axis"
   },
   {
    "from": 24.9,
