@@ -79,38 +79,52 @@ class Level:
         i = int(np.searchsorted(self.pd, self.distance(t), side="right")) - 1
         return self.ps[int(np.clip(i, 0, len(self.ps) - 1))]
 
-    def lift(self, t: float) -> tuple[float, str]:
-        """Lift above the LIVE ground line, anchored the way the game flies.
-
-        A jump changes height, not depth: the arc's vertical reference (and its
-        size) hold the take-off ground through the rise and ease into the live
-        ground across the descent - terrain changes mid-arc (the 7.15s
-        rail-to-road drop) ride in the descent, never in the rise.
-        """
+    def _arc_at(self, t: float):
+        """(takeoff, h, T, start, drop, gravity, v0, label) of the active arc."""
         for tk, h, air, label in self.arcs:
             if tk <= t <= tk + air:
-                phase = (t - tk) / air
-                blend = self.arc_ground(t)
-                raw = h * 4 * phase * (1 - phase)
-                return max(raw + self.ground(t) - blend, 0.0), label
-        return 0.0, ""
-
-    def arc_ground(self, t: float) -> float:
-        """The ball's ground reference: anchored mid-arc, live otherwise."""
-        for tk, h, air, _ in self.arcs:
-            if tk <= t <= tk + air:
                 start = self.ground(tk)
-                phase = (t - tk) / air
-                if phase <= 0.5:
-                    return start
-                clock = float(np.clip(2 * phase - 1, 0, 1))
-                eased = clock * clock * (3 - 2 * clock)
-                return start + (self.ground(t) - start) * eased
-        return self.ground(t)
+                drop = max(self.ground(tk + air) - start, -0.95 * h)
+                root = np.sqrt(2 * h) + np.sqrt(2 * (h + drop))
+                grav = root * root / (air * air)
+                return tk, h, air, start, drop, grav, np.sqrt(2 * grav * h), label
+        return None
+
+    def lift(self, t: float) -> tuple[float, str]:
+        """Lift above the LIVE ground line, flown the way the game flies.
+
+        The arc is ONE parabola in screen space, take-off point to landing
+        point, peaking `height` above the take-off line, under constant
+        acceleration - terrain changes mid-arc (the 7.15s rail-to-road drop)
+        never leak into the flight, and there is no kink after the apex.
+        """
+        arc = self._arc_at(t)
+        if arc is None:
+            return 0.0, ""
+        tk, h, air, start, drop, grav, v0, label = arc
+        s = t - tk
+        raw = v0 * s - 0.5 * grav * s * s
+        return max(raw + self.ground(t) - start, 0.0), label
+
+    def size_ground(self, t: float) -> float:
+        """Depth driving the ball's size: take-off's through the rise, easing
+        into the landing spot's across the descent."""
+        arc = self._arc_at(t)
+        if arc is None:
+            return self.ground(t)
+        tk, h, air, start, drop, grav, v0, label = arc
+        s = t - tk
+        if v0 - grav * s >= 0:
+            return start
+        raw = v0 * s - 0.5 * grav * s * s
+        fallen = float(np.clip((h - raw) / max(h + drop, 1e-4), 0, 1))
+        clock = np.sqrt(fallen)
+        eased = clock * clock * (3 - 2 * clock)
+        return start + (self.ground(t) - start) * eased
 
     def radius(self, t: float) -> float:
         span = self.near - self.far
-        depth = 0.0 if span <= 0 else np.clip((self.arc_ground(t) - self.far) / span, 0, 1)
+        depth = 0.0 if span <= 0 else np.clip((self.size_ground(t) - self.far) / span, 0, 1)
         return self.diameter * float(np.interp(depth, [0, 1], [0.82, 1.2])) * 0.5
 
     def strips(self, t: float) -> list[dict]:

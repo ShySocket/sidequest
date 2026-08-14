@@ -167,17 +167,20 @@ time each one cost.
   candidates were wrong until the reference was fixed; then seven of seven
   were right, including two the hand-authored spans had missed entirely).
 
-- **The live ground line belongs to the grounded ball; an arc must anchor.**
-  Following the line is right while rolling and during a dodge (a lane change
-  really is a step toward the camera), but measuring an arc's lift and size
-  against it lets terrain leak into flight: the 7.15s rail→road drop made the
-  ball *sink on screen mid-rise*, hover half a second at a doubled apex, and
-  swell 37% on the way up. Hold the take-off ground (position AND size)
-  through the rise, ease into the live ground across the descent
-  (`√(1−h/H)` smoothstepped — the descent's own clock), arrive exactly at
-  touchdown. The shadow stays on the live line and reads the altitude
-  honestly. Fixing only the size first was half a fix — the same reference
-  drives both; anchor them together.
+- **An arc is one parabola, take-off point to landing point — nothing else.**
+  Three rounds of the 7.15s rail→road vault taught this the long way. Lift
+  above the *live* line let terrain leak into flight (ball sank mid-rise,
+  hovered at a doubled apex, swelled 37% on the way up). Anchoring the rise
+  and *blending* the drop into the descent fixed those but kinked the motion
+  right after the apex — the blend's onset tripled the downward acceleration
+  for a beat, a visible lurch at 7.87s. Any piecewise easing of a flight path
+  puts a second-derivative seam somewhere, and the eye finds it. The answer
+  was never easing: constant acceleration through the whole arc,
+  `g = (√(2h)+√(2(h+d)))²/T²`, take-off speed `√(2gh)`, landing predicted
+  from the level at takeoff, touchdown where the parabola meets the live
+  line. Flat landings (`d=0`) reduce to the old constants exactly, so only
+  the arcs that were wrong changed. Size (not position) still eases across
+  the descent — depth is a fact, not physics, and easing it is invisible.
 - **The clearance check must exempt what a shipped occluder strip covers.**
   The overlap check always did; clearance didn't, and passed the 40.71s arc
   against a near-plane lamppost by a 0.004 margin of luck — any honest change

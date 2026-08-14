@@ -649,7 +649,8 @@ def verify_occlusion(
             )
 
     # The ball, exactly as the game computes it (mirrors VideoRunnerCharacter
-    # and the audit's motion model).
+    # and the audit's motion model): one parabola per arc, from the take-off
+    # point to the landing point, peaking `height` above the take-off line.
     def air_height(time: float) -> float:
         for event in level["events"]:
             if event["type"] not in ("jump", "hop"):
@@ -658,8 +659,18 @@ def verify_occlusion(
             duration = event.get("airTime") or 1.0
             since = time - event["time"]
             if 0.0 <= since <= duration:
-                phase = since / duration
-                return height * 4.0 * phase * (1.0 - phase)
+                d0 = float(np.interp(event["time"], map_t, map_d))
+                d1 = float(np.interp(event["time"] + duration, map_t, map_d))
+                start = float(np.interp(d0, path_d, path_y))
+                land = float(np.interp(d1, path_d, path_y))
+                drop = max(land - start, -0.95 * height)
+                root = np.sqrt(2 * height) + np.sqrt(2 * (height + drop))
+                gravity = root * root / (duration * duration)
+                speed = np.sqrt(2 * gravity * height)
+                air = speed * since - 0.5 * gravity * since * since
+                here = float(np.interp(
+                    np.interp(time, map_t, map_d), path_d, path_y))
+                return max(air + here - start, 0.0)
         return 0.0
 
     hidden = [(h["startTime"], h["endTime"]) for h in level.get("hidden", [])]

@@ -148,32 +148,54 @@ class LevelAuditor:
     def diameter_at(self, distance: float) -> float:
         return self.diameter_of(self.ground_at(distance))
 
-    def arc_ground_at(
-        self, distance: float, takeoff_distance: float, phase: float
-    ) -> float:
-        """The airborne ball's ground reference, as VideoRunnerCharacter anchors it.
+    def arc_params(
+        self, takeoff: float, height: float, duration: float
+    ) -> tuple[float, float, float, float]:
+        """(take-off ground, drop, gravity, take-off speed) of an arc.
 
-        A jump changes height, not where down the road the ball is: terrain
-        changes mid-arc (the 7.15s rail-to-road drop) must not leak into the
-        flight. The reference holds the take-off ground through the rise and
-        eases into the live ground across the descent, arriving exactly at
-        touchdown. Both the ball's vertical placement and its perspective size
-        follow this reference. Height falls with the square of time, so
-        ``2*phase - 1`` is the descent's own clock, and smoothing it starts and
-        ends the blend gently.
+        The flight is ONE parabola in screen space, exactly as
+        VideoRunnerCharacter flies it: from the take-off point to the landing
+        point, peaking ``height`` above the take-off line, under CONSTANT
+        acceleration - terrain never leaks into the arc, and there is no
+        blend kink after the apex. For a flat landing (drop 0) the constants
+        reduce to the old 8h/T^2 and 4h/T.
         """
-        start = self.ground_at(takeoff_distance)
-        if phase <= 0.5:
-            return start
-        clock = float(np.clip(2.0 * phase - 1.0, 0.0, 1.0))
-        eased = clock * clock * (3.0 - 2.0 * clock)
-        return start + (self.ground_at(distance) - start) * eased
+        start = self.ground_at(self.distance_at(takeoff))
+        land = self.ground_at(self.distance_at(takeoff + duration))
+        drop = max(land - start, -0.95 * height)
+        root = np.sqrt(2.0 * height) + np.sqrt(2.0 * (height + drop))
+        gravity = root * root / (duration * duration)
+        return start, drop, float(gravity), float(np.sqrt(2.0 * gravity * height))
 
-    def arc_diameter_at(
-        self, distance: float, takeoff_distance: float, phase: float
-    ) -> float:
-        """Diameter mid-arc: the size the anchored ground reference implies."""
-        return self.diameter_of(self.arc_ground_at(distance, takeoff_distance, phase))
+    def arc_state_at(
+        self,
+        distance: float,
+        since_takeoff: float,
+        start: float,
+        drop: float,
+        gravity: float,
+        speed: float,
+        height: float,
+    ) -> tuple[float, float]:
+        """(lift above the live ground, diameter) mid-arc, as the game renders.
+
+        The ball's bottom follows the parabola above the take-off line; its
+        size holds the take-off spot's depth through the rise and eases into
+        the landing spot's across the descent (square root of the fallen
+        fraction - the descent's own clock - smoothstepped).
+        """
+        air = speed * since_takeoff - 0.5 * gravity * since_takeoff**2
+        ground = self.ground_at(distance)
+        lift = max(air + ground - start, 0.0)
+
+        eased = 0.0
+        if speed - gravity * since_takeoff < 0.0:
+            fallen = float(np.clip(
+                (height - air) / max(height + drop, 1e-4), 0.0, 1.0))
+            clock = np.sqrt(fallen)
+            eased = float(clock * clock * (3.0 - 2.0 * clock))
+        size_ground = start + (ground - start) * eased
+        return lift, self.diameter_of(size_ground)
 
     def arc(self, height: float, air_time: float = 0.0) -> tuple[float, float]:
         """(clamped height, duration) exactly as VideoRunnerCharacter computes.
@@ -446,7 +468,10 @@ class LevelAuditor:
 
             height, duration = self.arc(event.get("height", 0.0), event.get("airTime", 0.0))
             takeoff = float(event["time"])
-            peak_time = takeoff + duration * 0.5
+            start, drop, gravity, speed = self.arc_params(takeoff, height, duration)
+            # The parabola peaks where its velocity crosses zero - earlier
+            # than mid-arc when the landing sits lower than the take-off.
+            peak_time = takeoff + speed / gravity
 
             worst_gap = np.inf
             worst_detail = ""
@@ -464,15 +489,12 @@ class LevelAuditor:
                 distance = self.distance_at(time)
                 ground = self.ground_at(distance)
                 column = self.column_at(distance)
-                radius = self.arc_diameter_at(
-                    distance, self.distance_at(takeoff), step / duration) * 0.5
-                # Lift above the LOCAL ground: the anchored reference means a
-                # drop carried by the arc adds to the clearance the vault
-                # actually shows on screen.
-                blend = self.arc_ground_at(
-                    distance, self.distance_at(takeoff), step / duration)
-                lift = max(
-                    self.air_height(height, duration, step) + ground - blend, 0.0)
+                # Lift above the LOCAL ground: the parabola means a drop
+                # carried by the arc adds to the clearance the vault actually
+                # shows on screen.
+                lift, diameter = self.arc_state_at(
+                    distance, step, start, drop, gravity, speed, height)
+                radius = diameter * 0.5
 
                 for box in self.obstacle_boxes(time):
                     if box["x2"] < column - radius or box["x1"] > column + radius:
@@ -587,6 +609,7 @@ class LevelAuditor:
 
             height, duration = self.arc(event.get("height", 0.0), event.get("airTime", 0.0))
             takeoff = float(event["time"])
+            start, drop, gravity, speed = self.arc_params(takeoff, height, duration)
 
             worst = 0.0
             worst_detail = ""
@@ -595,17 +618,14 @@ class LevelAuditor:
                 distance = self.distance_at(time)
                 ground = self.ground_at(distance)
                 column = self.column_at(distance)
-                blend = self.arc_ground_at(
-                    distance, self.distance_at(takeoff), step / duration)
-                diameter = self.diameter_of(blend)
+                # The rendered bottom follows the parabola (never below the
+                # live line), same as the game.
+                lift, diameter = self.arc_state_at(
+                    distance, step, start, drop, gravity, speed, height)
                 # Slightly under the drawn radius: the shading rolls off at
                 # the rim, so a mathematical tangency does not read as touch.
                 ry = diameter * 0.5 * 0.85
                 rx = ry / aspect
-                # The rendered bottom is the anchored reference minus the arc's
-                # own lift (never below the live line), same as the game.
-                lift = max(
-                    self.air_height(height, duration, step) + ground - blend, 0.0)
                 cy = ground - lift - diameter * 0.5
 
                 for box in self.obstacle_boxes(time, classes):
@@ -804,7 +824,7 @@ class LevelAuditor:
         duration_total = float(self.map_t[-1])
         hidden = [(h["startTime"], h["endTime"]) for h in self.level.get("hidden", [])]
         # Airborne size change is the landing spot's depth arriving - held
-        # through the rise, then eased in across the descent (arc_diameter_at),
+        # through the rise, then eased in across the descent (arc_state_at),
         # never a pop - so jump spans are not policed either.
         arcs = []
         for event in self.level["events"]:

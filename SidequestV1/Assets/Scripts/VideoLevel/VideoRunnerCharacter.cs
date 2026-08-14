@@ -88,6 +88,9 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     float smoothedGround = -1f;
     float groundVelocity;
     float takeOffGround = -1f;
+    float arcDrop;
+    float arcGravity;
+    float arcTakeOffSpeed;
     float smoothedColumn = -1f;
     float columnVelocity;
     float dodgeElapsed = -1f;
@@ -289,12 +292,17 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         }
 
         float arc = ArcDuration();
-        float gravity =
-            8f * Mathf.Max(activeJumpHeight, 0.01f) / Mathf.Max(arc * arc, 0.0001f);
+        float gravity = arcGravity > 0f
+            ? arcGravity
+            : 8f * Mathf.Max(activeJumpHeight, 0.01f) / Mathf.Max(arc * arc, 0.0001f);
         verticalVelocity -= gravity * deltaTime;
         airHeight += verticalVelocity * deltaTime;
 
-        if (airHeight <= 0f)
+        // airHeight is measured above the TAKE-OFF line, so touchdown is where
+        // the parabola meets the LIVE line - below zero when the landing spot
+        // sits lower than the take-off, above it when the ground rose.
+        float floor = takeOffGround >= 0f ? takeOffGround - smoothedGround : 0f;
+        if (airHeight <= floor)
         {
             airHeight = 0f;
             verticalVelocity = 0f;
@@ -379,11 +387,30 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             ? Mathf.Clamp(cue.height, 0.05f, 0.8f)
             : Mathf.Clamp(jumpHeight, jumpHeightRange.x, jumpHeightRange.y);
         activeAirTime = cue.airTime;
-        verticalVelocity = 4f * activeJumpHeight / Mathf.Max(ArcDuration(), 0.01f);
+
+        // The arc is ONE parabola in screen space, from the take-off point to
+        // the landing point, peaking `height` above the take-off line. Its
+        // acceleration is constant - that is what "ballistic" looks like -
+        // and for a flat landing (drop 0) the constants reduce exactly to the
+        // old 8h/T^2 and 4h/T. A landing below the take-off (the 7.15s
+        // rail-to-road vault) simply falls farther than it rose, under the
+        // same gravity, instead of blending the terrain drop into the descent
+        // (which kicked in right after the apex and read as a lurch).
+        takeOffGround = smoothedGround;
+        float duration = Mathf.Max(ArcDuration(), 0.01f);
+        float landDistance = director.Level.DistanceAtTime(cue.time + duration);
+        // Never land above your own apex: a corrupt prediction would make the
+        // square root below meaningless.
+        arcDrop = Mathf.Max(
+            director.Level.GroundAtDistance(landDistance) - takeOffGround,
+            -0.95f * activeJumpHeight);
+        float root = Mathf.Sqrt(2f * activeJumpHeight)
+            + Mathf.Sqrt(2f * (activeJumpHeight + arcDrop));
+        arcGravity = root * root / (duration * duration);
+        arcTakeOffSpeed = Mathf.Sqrt(2f * arcGravity * activeJumpHeight);
+        verticalVelocity = arcTakeOffSpeed;
         airHeight = 0.0001f;
         stance = Stance.Airborne;
-        // The size the ball leaves the ground at; it keeps it through the rise.
-        takeOffGround = smoothedGround;
     }
 
     /// <summary>
@@ -391,9 +418,11 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     /// The share of the landing spot's depth the ball has taken on.
     /// </summary>
     /// <remarks>
-    /// Height falls with the square of time, so the square root of the fallen
-    /// fraction is the descent's own clock - linear in time - and smoothing it
-    /// starts and finishes the size change gently instead of at full rate.
+    /// The descent runs from the apex (`height` above the take-off line) down
+    /// to the landing spot (`arcDrop` below it). Height falls with the square
+    /// of time, so the square root of the fallen fraction is the descent's own
+    /// clock - linear in time - and smoothing it starts and finishes the size
+    /// change gently instead of at full rate.
     /// </remarks>
     float DescentFraction()
     {
@@ -402,7 +431,9 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             return 0f;
         }
 
-        float fallen = Mathf.Clamp01(1f - airHeight / Mathf.Max(activeJumpHeight, 0.0001f));
+        float height = Mathf.Max(activeJumpHeight, 0.0001f);
+        float fallen = Mathf.Clamp01(
+            (height - airHeight) / Mathf.Max(height + arcDrop, 0.0001f));
         return Mathf.SmoothStep(0f, 1f, Mathf.Sqrt(fallen));
     }
 
@@ -415,7 +446,9 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     /// <summary>Take-off speed of the jump in progress, for normalizing stretch.</summary>
     float TakeOffSpeed()
     {
-        return 4f * Mathf.Max(activeJumpHeight, 0.01f) / Mathf.Max(ArcDuration(), 0.01f);
+        return arcTakeOffSpeed > 0f
+            ? arcTakeOffSpeed
+            : 4f * Mathf.Max(activeJumpHeight, 0.01f) / Mathf.Max(ArcDuration(), 0.01f);
     }
 
     /// <summary>
@@ -506,25 +539,24 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         // airborne ball made the 7.15s vault sag mid-RISE (the line dives
         // faster than the lift grows) and then hover at a doubled apex - and
         // grew the ball 37% while rising, which reads as flying at the camera.
-        // So while airborne BOTH the vertical reference and the size anchor to
-        // their take-off values through the rise and ease into the landing
-        // spot's across the descent, arriving exactly at touchdown: one clean
-        // parabola above the rail, then a fall that carries the drop. The
-        // shadow stays on the live terrain line below and reads the extra
-        // altitude honestly.
-        float arcGround = stance == Stance.Airborne && takeOffGround >= 0f
+        // The flight itself is the single parabola StartScheduledJump set up,
+        // measured above the take-off line; only the SIZE eases from the
+        // take-off spot's depth to the landing spot's across the descent,
+        // arriving exactly at touchdown. The shadow stays on the live terrain
+        // line below and reads the altitude honestly.
+        float sizeGround = stance == Stance.Airborne && takeOffGround >= 0f
             ? Mathf.Lerp(takeOffGround, groundY, DescentFraction())
             : groundY;
         Vector2 range = director.Level.PathDepthRange;
-        float depth = Mathf.InverseLerp(range.x, range.y, arcGround);
+        float depth = Mathf.InverseLerp(range.x, range.y, sizeGround);
 
-        // The ball's height above the LIVE ground line, with the anchor folded
-        // in: its rendered bottom is arcGround - airHeight, expressed here
-        // relative to groundY because that is where the shadow sits. Floored
-        // so a mid-arc ground step up can never push it below the terrain and
-        // fake a landing.
-        float arcAir = Mathf.Max(airHeight + (groundY - arcGround),
-            stance == Stance.Airborne ? 0.0001f : 0f);
+        // The ball's height above the LIVE ground line: its rendered bottom is
+        // takeOffGround - airHeight, expressed here relative to groundY because
+        // that is where the shadow sits. Floored so a mid-arc ground step up
+        // can never push it below the terrain and fake a landing.
+        float arcAir = stance == Stance.Airborne && takeOffGround >= 0f
+            ? Mathf.Max(airHeight + (groundY - takeOffGround), 0.0001f)
+            : airHeight;
         // The level records the diameter the movement was drawn at; prefer it
         // over the serialized field, which a scene saved earlier would pin.
         float authored = director.Level.MarkerDiameter;
@@ -599,6 +631,9 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         smoothedGround = -1f;
         smoothedColumn = -1f;
         takeOffGround = -1f;
+        arcDrop = 0f;
+        arcGravity = 0f;
+        arcTakeOffSpeed = 0f;
         groundVelocity = 0f;
         columnVelocity = 0f;
         lastVideoTime = -1f;

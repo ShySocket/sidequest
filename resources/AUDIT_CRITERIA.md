@@ -65,13 +65,16 @@ takeoff) and the cue carries its drawn `airTime`:
   design (the near lamppost sweeping the 40.71 s arc). Occlusion is the
   exemption, not depth alone: the 9.45 s van ships no strip and must be
   cleared for real.
-- Lift is measured above the **live** ground line with the arc's reference
-  anchored: hold the take-off ground through the rise, ease into the live
-  ground across the descent (smoothstepped `2φ−1`, the descent's own clock).
-  A drop the arc carries (rail→road at 7.15 s) adds to the clearance the
-  vault genuinely shows; a mid-arc rise subtracts. The ball's size follows
-  the same reference — the game and the audit share this in
-  `arc_ground_at`/`arc_diameter_at`.
+- The flight is ONE parabola in screen space — take-off point to landing
+  point, peaking `height` above the take-off line, **constant** acceleration
+  `g = (√(2h)+√(2(h+d)))²/T²` (for a flat landing this is the old `8h/T²`).
+  Lift is that parabola measured above the **live** ground line: a drop the
+  arc carries (rail→road at 7.15 s) adds to the clearance the vault genuinely
+  shows; a mid-arc rise subtracts. The ownership peak is where the parabola's
+  velocity crosses zero (earlier than mid-arc when the landing sits lower).
+  The ball's size holds the take-off spot's depth through the rise and eases
+  into the landing spot's across the descent — the game and the audit share
+  this in `arc_params`/`arc_state_at`.
 - Requirement per frame the box overlaps:
   `lift ≥ min(0.45·obstacleHeight, 0.85·h) · widthFactor`, with
   `widthFactor = clamp(boxWidth/0.06, 0.45, 1.0)`.

@@ -225,21 +225,28 @@ Four cues do the work of making it look present, in rough order of importance:
 
 ## Design notes
 
-**A jump changes height, not depth — terrain must not leak into the arc.** The
-7.15s car vault takes off from the rail and lands on the road, and the road
-sits 0.21 of a frame lower. Measuring the arc's lift above the *live* ground
-line let that drop eat the rise: the ball sagged on screen at 7.5s while
-nominally ascending, then hovered near a doubled apex for half a second — and
-its size grew 37% on the way *up*, which reads as flying at the camera. While
-airborne, both the ball's vertical reference and its size now anchor to their
-take-off values through the rise and ease into the landing spot's across the
-descent (the descent's own clock is `√(1−h/H)`, smoothstepped), arriving
-exactly at touchdown so nothing pops when it lands. One clean parabola above
-the rail, then a fall that carries the drop — which is also real physics: a
-landing below the take-off point descends farther than it rose. The contact
-shadow stays on the live terrain line and reads the extra altitude honestly.
-`audit`'s `arc_ground_at`/`arc_diameter_at` mirror the rule, so the offline
-clearance and overlap checks fly the ball the same way the game does.
+**An arc is ONE parabola in screen space — terrain never leaks into flight.**
+The 7.15s car vault takes off from the rail and lands on the road, 0.21 of a
+frame lower. Measuring the arc's lift above the *live* ground line let that
+drop eat the rise (the ball sagged mid-ascent, hovered at a doubled apex, and
+its size grew 37% on the way up); a first repair — hold the take-off ground
+through the rise, blend the drop into the descent — fixed those but put a
+kink right after the apex: the blend's onset added ~2.6/s² of extra downward
+acceleration to gravity's 1.35, a visible lurch at 7.87s. The real rule is
+plain ballistics: the flight is a single parabola from the take-off point to
+the landing point, peaking `height` above the take-off line, under **constant**
+acceleration `g = (√(2h) + √(2(h+d)))²/T²` with take-off speed `√(2gh)`,
+where `d` is the landing spot's drop below the take-off (read from the level
+at takeoff). For a flat landing (`d = 0`) these reduce exactly to the old
+`8h/T²` and `4h/T`, so flat arcs are untouched; a landing below the take-off
+simply falls farther than it rose, under the same gravity — which is what
+real projectiles do. Touchdown is where the parabola meets the live line.
+Only the ball's *size* eases from the take-off spot's depth to the landing
+spot's across the descent (`√fallen`, smoothstepped — the descent's own
+clock); the contact shadow stays on the live terrain line and reads the
+altitude honestly. `audit`'s `arc_params`/`arc_state_at` (and the occluder
+verify's motion model) fly the same math, so every offline check places the
+ball exactly as the game does.
 
 **Motion is kinematic, not physics-driven.** The ground here is a line sampled
 from the video, not a collider, and it slides around the screen as the car
