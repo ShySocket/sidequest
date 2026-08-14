@@ -58,8 +58,20 @@ takeoff) and the cue carries its drawn `airTime`:
   [0.12, 0.50], `airTime` to [0.6, 3.4] — the game's own formula.
 - Ownership: the cue owns boxes crossing the column within **±0.55 s of the
   drawn peak**. A pole most of a second away is a different object.
-- Candidate boxes: non-surface classes, overlapping the ball's x-extent, whose
-  bottom sits within 0.18 of the ball's ground (things standing in its path).
+- Candidate boxes: non-surface classes, overlapping the ball's x-extent,
+  reaching down to within 0.18 of the ball's ground (things standing in its
+  path; a near van's box runs past the frame bottom and still counts). A box a
+  shipped occluder strip covers is exempt — the ball passes *behind* it by
+  design (the near lamppost sweeping the 40.71 s arc). Occlusion is the
+  exemption, not depth alone: the 9.45 s van ships no strip and must be
+  cleared for real.
+- Lift is measured above the **live** ground line with the arc's reference
+  anchored: hold the take-off ground through the rise, ease into the live
+  ground across the descent (smoothstepped `2φ−1`, the descent's own clock).
+  A drop the arc carries (rail→road at 7.15 s) adds to the clearance the
+  vault genuinely shows; a mid-arc rise subtracts. The ball's size follows
+  the same reference — the game and the audit share this in
+  `arc_ground_at`/`arc_diameter_at`.
 - Requirement per frame the box overlaps:
   `lift ≥ min(0.45·obstacleHeight, 0.85·h) · widthFactor`, with
   `widthFactor = clamp(boxWidth/0.06, 0.45, 1.0)`.

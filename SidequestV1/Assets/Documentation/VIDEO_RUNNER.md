@@ -220,10 +220,26 @@ Four cues do the work of making it look present, in rough order of importance:
 |---|---|
 | Contact shadow | Without it the ball reads as a sticker. Size and opacity track height — that is what says *airborne* rather than *bigger* |
 | Rolling | A ball that translates without rotating looks dragged. Rate comes from the level's measured screen speed, so it matches the world sliding past |
-| Perspective scale | The ground line rises and falls as the road nears and recedes; the ball scales with it or it appears to swim |
+| Perspective scale | The ground line rises and falls as the road nears and recedes; the ball scales with it or it appears to swim. **Not mid-rise, though** — see below |
 | Squash and stretch | Stretch through the arc, squash on landing — makes a jump read as effort rather than a slide upward. Driven by speed as a fraction of take-off, so it means the same at any jump height |
 
 ## Design notes
+
+**A jump changes height, not depth — terrain must not leak into the arc.** The
+7.15s car vault takes off from the rail and lands on the road, and the road
+sits 0.21 of a frame lower. Measuring the arc's lift above the *live* ground
+line let that drop eat the rise: the ball sagged on screen at 7.5s while
+nominally ascending, then hovered near a doubled apex for half a second — and
+its size grew 37% on the way *up*, which reads as flying at the camera. While
+airborne, both the ball's vertical reference and its size now anchor to their
+take-off values through the rise and ease into the landing spot's across the
+descent (the descent's own clock is `√(1−h/H)`, smoothstepped), arriving
+exactly at touchdown so nothing pops when it lands. One clean parabola above
+the rail, then a fall that carries the drop — which is also real physics: a
+landing below the take-off point descends farther than it rose. The contact
+shadow stays on the live terrain line and reads the extra altitude honestly.
+`audit`'s `arc_ground_at`/`arc_diameter_at` mirror the rule, so the offline
+clearance and overlap checks fly the ball the same way the game does.
 
 **Motion is kinematic, not physics-driven.** The ground here is a line sampled
 from the video, not a collider, and it slides around the screen as the car

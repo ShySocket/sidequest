@@ -87,6 +87,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
     float smoothedGround = -1f;
     float groundVelocity;
+    float takeOffGround = -1f;
     float smoothedColumn = -1f;
     float columnVelocity;
     float dodgeElapsed = -1f;
@@ -381,6 +382,28 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         verticalVelocity = 4f * activeJumpHeight / Mathf.Max(ArcDuration(), 0.01f);
         airHeight = 0.0001f;
         stance = Stance.Airborne;
+        // The size the ball leaves the ground at; it keeps it through the rise.
+        takeOffGround = smoothedGround;
+    }
+
+    /// <summary>
+    /// How far through its descent the arc is, 0 while rising and 1 at touchdown.
+    /// The share of the landing spot's depth the ball has taken on.
+    /// </summary>
+    /// <remarks>
+    /// Height falls with the square of time, so the square root of the fallen
+    /// fraction is the descent's own clock - linear in time - and smoothing it
+    /// starts and finishes the size change gently instead of at full rate.
+    /// </remarks>
+    float DescentFraction()
+    {
+        if (stance != Stance.Airborne || verticalVelocity >= 0f)
+        {
+            return 0f;
+        }
+
+        float fallen = Mathf.Clamp01(1f - airHeight / Mathf.Max(activeJumpHeight, 0.0001f));
+        return Mathf.SmoothStep(0f, 1f, Mathf.Sqrt(fallen));
     }
 
     /// <summary>Seconds the dodge in progress takes: the cue's own, or the tuned default.</summary>
@@ -477,8 +500,31 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         // descends. Without this it appears to swim as the road nears and recedes.
         // The range comes from this level's own path percentiles, so the size
         // sweep matches how much depth the clip's path actually covers.
+        //
+        // A jump changes height, not where down the road the ball is: a
+        // rail-to-road drop mid-arc is terrain, and letting it leak into the
+        // airborne ball made the 7.15s vault sag mid-RISE (the line dives
+        // faster than the lift grows) and then hover at a doubled apex - and
+        // grew the ball 37% while rising, which reads as flying at the camera.
+        // So while airborne BOTH the vertical reference and the size anchor to
+        // their take-off values through the rise and ease into the landing
+        // spot's across the descent, arriving exactly at touchdown: one clean
+        // parabola above the rail, then a fall that carries the drop. The
+        // shadow stays on the live terrain line below and reads the extra
+        // altitude honestly.
+        float arcGround = stance == Stance.Airborne && takeOffGround >= 0f
+            ? Mathf.Lerp(takeOffGround, groundY, DescentFraction())
+            : groundY;
         Vector2 range = director.Level.PathDepthRange;
-        float depth = Mathf.InverseLerp(range.x, range.y, groundY);
+        float depth = Mathf.InverseLerp(range.x, range.y, arcGround);
+
+        // The ball's height above the LIVE ground line, with the anchor folded
+        // in: its rendered bottom is arcGround - airHeight, expressed here
+        // relative to groundY because that is where the shadow sits. Floored
+        // so a mid-arc ground step up can never push it below the terrain and
+        // fake a landing.
+        float arcAir = Mathf.Max(airHeight + (groundY - arcGround),
+            stance == Stance.Airborne ? 0.0001f : 0f);
         // The level records the diameter the movement was drawn at; prefer it
         // over the serialized field, which a scene saved earlier would pin.
         float authored = director.Level.MarkerDiameter;
@@ -502,7 +548,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             {
                 float ry = diameter * 0.5f / frameHeight;
                 float rx = diameter * 0.5f / background.FrameWidthInWorld;
-                float centreY = groundY - airHeight - ry;
+                float centreY = groundY - arcAir - ry;
                 shown = strip.xMin <= column + rx && strip.xMax >= column - rx
                     && strip.yMin <= centreY + ry && strip.yMax >= centreY - ry;
                 if (shown)
@@ -523,7 +569,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                 new VideoRunnerBallView.Pose
                 {
                     GroundPosition = groundPosition,
-                    AirHeight = airHeight * frameHeight,
+                    AirHeight = arcAir * frameHeight,
                     Diameter = diameter,
                     ScreenSpeed = director.Level.ScreenSpeedAtDistance(distance)
                         * background.FrameWidthInWorld,
@@ -552,6 +598,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         lastOutcome = string.Empty;
         smoothedGround = -1f;
         smoothedColumn = -1f;
+        takeOffGround = -1f;
         groundVelocity = 0f;
         columnVelocity = 0f;
         lastVideoTime = -1f;

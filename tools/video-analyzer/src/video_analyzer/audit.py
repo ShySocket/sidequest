@@ -140,11 +140,40 @@ class LevelAuditor:
         index = int(np.searchsorted(self.path_d, distance, side="right")) - 1
         return self.path_s[int(np.clip(index, 0, len(self.path_s) - 1))]
 
-    def diameter_at(self, distance: float) -> float:
-        ground = self.ground_at(distance)
+    def diameter_of(self, ground: float) -> float:
         span = self.depth_near - self.depth_far
         depth = 0.0 if span <= 0 else np.clip((ground - self.depth_far) / span, 0, 1)
         return self.marker_diameter * float(np.interp(depth, [0, 1], [0.82, 1.2]))
+
+    def diameter_at(self, distance: float) -> float:
+        return self.diameter_of(self.ground_at(distance))
+
+    def arc_ground_at(
+        self, distance: float, takeoff_distance: float, phase: float
+    ) -> float:
+        """The airborne ball's ground reference, as VideoRunnerCharacter anchors it.
+
+        A jump changes height, not where down the road the ball is: terrain
+        changes mid-arc (the 7.15s rail-to-road drop) must not leak into the
+        flight. The reference holds the take-off ground through the rise and
+        eases into the live ground across the descent, arriving exactly at
+        touchdown. Both the ball's vertical placement and its perspective size
+        follow this reference. Height falls with the square of time, so
+        ``2*phase - 1`` is the descent's own clock, and smoothing it starts and
+        ends the blend gently.
+        """
+        start = self.ground_at(takeoff_distance)
+        if phase <= 0.5:
+            return start
+        clock = float(np.clip(2.0 * phase - 1.0, 0.0, 1.0))
+        eased = clock * clock * (3.0 - 2.0 * clock)
+        return start + (self.ground_at(distance) - start) * eased
+
+    def arc_diameter_at(
+        self, distance: float, takeoff_distance: float, phase: float
+    ) -> float:
+        """Diameter mid-arc: the size the anchored ground reference implies."""
+        return self.diameter_of(self.arc_ground_at(distance, takeoff_distance, phase))
 
     def arc(self, height: float, air_time: float = 0.0) -> tuple[float, float]:
         """(clamped height, duration) exactly as VideoRunnerCharacter computes.
@@ -388,13 +417,28 @@ class LevelAuditor:
         self._support_stats = (frames, supported)
         return violations
 
-    def check_clearance(self) -> list[Violation]:
+    def check_clearance(self, timeline_path: Path | None = None) -> list[Violation]:
         """The scheduled arc must clear its obstacle.
 
         Jumps are predetermined choreography now - the arc fires at exactly the
         written time on every playthrough, and input only scores - so there is
         no tap family to audit. One arc, one verdict.
+
+        A box a shipped occluder strip covers is exempt, as in the overlap
+        check: the ball passes BEHIND it by design (the near lamppost sweeping
+        the 40.71s arc), so the vault does not answer for it. Occlusion is the
+        exemption, not depth alone - the 9.45s van's base also runs past the
+        frame bottom, but no strip ships there, and the arc must truly clear it.
         """
+        forced: list[tuple[float, float]] = []
+        if timeline_path is not None and timeline_path.exists():
+            timeline = json.loads(timeline_path.read_text())
+            forced = [
+                (float(s["from"]), float(s["to"]))
+                for s in timeline.get("behindSpans", [])
+            ]
+        strips = self.level.get("foreground", [])
+
         violations = []
         for event in self.level["events"]:
             if event["type"] != "jump":
@@ -420,8 +464,15 @@ class LevelAuditor:
                 distance = self.distance_at(time)
                 ground = self.ground_at(distance)
                 column = self.column_at(distance)
-                radius = self.diameter_at(distance) * 0.5
-                lift = self.air_height(height, duration, step)
+                radius = self.arc_diameter_at(
+                    distance, self.distance_at(takeoff), step / duration) * 0.5
+                # Lift above the LOCAL ground: the anchored reference means a
+                # drop carried by the arc adds to the clearance the vault
+                # actually shows on screen.
+                blend = self.arc_ground_at(
+                    distance, self.distance_at(takeoff), step / duration)
+                lift = max(
+                    self.air_height(height, duration, step) + ground - blend, 0.0)
 
                 for box in self.obstacle_boxes(time):
                     if box["x2"] < column - radius or box["x1"] > column + radius:
@@ -431,6 +482,12 @@ class LevelAuditor:
                     # the ground": a near van's box runs past the frame bottom,
                     # and the old symmetric check filtered it out entirely.
                     if box["y2"] < ground - 0.18:
+                        continue
+                    # Behind a shipped occluder strip: the ball passes behind
+                    # this object, the arc does not vault it.
+                    if any(a <= time <= b for a, b in forced) or self._is_occluded(
+                        distance, box, strips
+                    ):
                         continue
                     # Strict box-disjointness is deliberately not the test: a
                     # parked SUV's box towers over any jump, and even the
@@ -538,12 +595,18 @@ class LevelAuditor:
                 distance = self.distance_at(time)
                 ground = self.ground_at(distance)
                 column = self.column_at(distance)
+                blend = self.arc_ground_at(
+                    distance, self.distance_at(takeoff), step / duration)
+                diameter = self.diameter_of(blend)
                 # Slightly under the drawn radius: the shading rolls off at
                 # the rim, so a mathematical tangency does not read as touch.
-                ry = self.diameter_at(distance) * 0.5 * 0.85
+                ry = diameter * 0.5 * 0.85
                 rx = ry / aspect
-                lift = self.air_height(height, duration, step)
-                cy = ground - lift - self.diameter_at(distance) * 0.5
+                # The rendered bottom is the anchored reference minus the arc's
+                # own lift (never below the live line), same as the game.
+                lift = max(
+                    self.air_height(height, duration, step) + ground - blend, 0.0)
+                cy = ground - lift - diameter * 0.5
 
                 for box in self.obstacle_boxes(time, classes):
                     # Standing farther than the ball: painted background.
@@ -740,8 +803,9 @@ class LevelAuditor:
         violations = []
         duration_total = float(self.map_t[-1])
         hidden = [(h["startTime"], h["endTime"]) for h in self.level.get("hidden", [])]
-        # Airborne size change is the landing spot's depth arriving - a smooth
-        # ramp under the arc, not a pop - so jump spans are not policed either.
+        # Airborne size change is the landing spot's depth arriving - held
+        # through the rise, then eased in across the descent (arc_diameter_at),
+        # never a pop - so jump spans are not policed either.
         arcs = []
         for event in self.level["events"]:
             if event["type"] in ("jump", "platform", "hop"):
@@ -928,7 +992,7 @@ class LevelAuditor:
     def run(self, timeline_path: Path | None = None) -> AuditResult:
         result = AuditResult()
         result.violations += self.check_support()
-        result.violations += self.check_clearance()
+        result.violations += self.check_clearance(timeline_path)
         result.violations += self.check_overlap(timeline_path)
         result.violations += self.check_dodges()
         result.violations += self.check_size()

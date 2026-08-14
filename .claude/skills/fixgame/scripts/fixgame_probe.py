@@ -80,15 +80,37 @@ class Level:
         return self.ps[int(np.clip(i, 0, len(self.ps) - 1))]
 
     def lift(self, t: float) -> tuple[float, str]:
+        """Lift above the LIVE ground line, anchored the way the game flies.
+
+        A jump changes height, not depth: the arc's vertical reference (and its
+        size) hold the take-off ground through the rise and ease into the live
+        ground across the descent - terrain changes mid-arc (the 7.15s
+        rail-to-road drop) ride in the descent, never in the rise.
+        """
         for tk, h, air, label in self.arcs:
             if tk <= t <= tk + air:
                 phase = (t - tk) / air
-                return h * 4 * phase * (1 - phase), label
+                blend = self.arc_ground(t)
+                raw = h * 4 * phase * (1 - phase)
+                return max(raw + self.ground(t) - blend, 0.0), label
         return 0.0, ""
+
+    def arc_ground(self, t: float) -> float:
+        """The ball's ground reference: anchored mid-arc, live otherwise."""
+        for tk, h, air, _ in self.arcs:
+            if tk <= t <= tk + air:
+                start = self.ground(tk)
+                phase = (t - tk) / air
+                if phase <= 0.5:
+                    return start
+                clock = float(np.clip(2 * phase - 1, 0, 1))
+                eased = clock * clock * (3 - 2 * clock)
+                return start + (self.ground(t) - start) * eased
+        return self.ground(t)
 
     def radius(self, t: float) -> float:
         span = self.near - self.far
-        depth = 0.0 if span <= 0 else np.clip((self.ground(t) - self.far) / span, 0, 1)
+        depth = 0.0 if span <= 0 else np.clip((self.arc_ground(t) - self.far) / span, 0, 1)
         return self.diameter * float(np.interp(depth, [0, 1], [0.82, 1.2])) * 0.5
 
     def strips(self, t: float) -> list[dict]:

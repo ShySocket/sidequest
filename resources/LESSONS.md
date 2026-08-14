@@ -167,6 +167,26 @@ time each one cost.
   candidates were wrong until the reference was fixed; then seven of seven
   were right, including two the hand-authored spans had missed entirely).
 
+- **The live ground line belongs to the grounded ball; an arc must anchor.**
+  Following the line is right while rolling and during a dodge (a lane change
+  really is a step toward the camera), but measuring an arc's lift and size
+  against it lets terrain leak into flight: the 7.15s rail→road drop made the
+  ball *sink on screen mid-rise*, hover half a second at a doubled apex, and
+  swell 37% on the way up. Hold the take-off ground (position AND size)
+  through the rise, ease into the live ground across the descent
+  (`√(1−h/H)` smoothstepped — the descent's own clock), arrive exactly at
+  touchdown. The shadow stays on the live line and reads the altitude
+  honestly. Fixing only the size first was half a fix — the same reference
+  drives both; anchor them together.
+- **The clearance check must exempt what a shipped occluder strip covers.**
+  The overlap check always did; clearance didn't, and passed the 40.71s arc
+  against a near-plane lamppost by a 0.004 margin of luck — any honest change
+  to arc geometry then "broke" it. Occlusion is the exemption, not depth
+  alone: the 9.45s van's base also runs past the frame bottom, but no strip
+  ships there, so the arc must truly clear it. Sibling checks that walk the
+  same frames must share their exemption lists, or a fix in one geometry
+  surfaces phantom violations in the other.
+
 ## Process
 
 - **Verify every scripted edit.** Two `str.replace` patches silently no-op'd
