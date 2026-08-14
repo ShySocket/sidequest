@@ -1,0 +1,24 @@
+{
+  "skill_name": "fixgame",
+  "notes": "CAUTION: a with-skill run mutates shared repo state (timeline.json, out/, StreamingAssets, git) and takes minutes (SAM + Unity). Run evals SERIALLY, each in a fresh git worktree, or git-restore the touched files between runs. Never run two in parallel against the same checkout.",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "the ball looks like it clips the second sign on the hedge, somewhere around 28 seconds - can you make sure it clears it properly?",
+      "expected_output": "The 28.2s sign hop's crossing is re-measured from detections, the arc adjusted so no frame intersects the sign (SAM-confirmed), audit 0 violations, before/after frame sheets produced, level re-shipped.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "prompt": "around 33 the ball should duck behind that tall pole instead of just rolling past it, like it does at 41",
+      "expected_output": "Occlusion added for the ~33s pole (behindSpan or derived), verified by the occluders --verify contract and a rendered sheet showing the ball hidden behind the pole while crossing; audit clean.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "prompt": "the jump over the fence near the end (~77s) feels really slow and floaty, fix it",
+      "expected_output": "The 77s fence arc graded against gravity (T = 2.44*sqrt(h)) and retimed to at or under its gravity time while still clearing the fence's measured crossing; audit clean, frames verified.",
+      "files": []
+    }
+  ]
+}
