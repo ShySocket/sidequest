@@ -216,6 +216,19 @@ time each one cost.
   proves the state machine. When a player says "it doesn't jump" and every
   render says it does, trace the engine before re-checking the math.
 
+- **The game clock is the VideoPlayer's, and it can skip.** In NativeRate
+  mode `videoTime = player.time` by design — and Unity's decoder skipped
+  26.26 → 26.53 on this file deterministically (reproduced twice, plus with
+  a 3s linear run-up; the frames exist, the map is smooth — it is the
+  player's clock, not the data). A cue inside such a dead zone fires 0.25s
+  late and desyncs from the footage. Two rules: (1) never place a cue
+  inside a known dead zone — fire on the last live frame before it; an arc
+  already airborne integrates on video time, so the skip carries it through
+  its middle in perfect sync with the jumped footage. (2) Chained or
+  tightly-timed choreography is only proven by an in-engine stance trace
+  WITH a clock-jump detector (log `videoTime` deltas > 0.09s) — offline
+  mirrors assume a continuous clock and cannot see any of this.
+
 ## Process
 
 - **Verify every scripted edit.** Two `str.replace` patches silently no-op'd

@@ -104,8 +104,16 @@
    "type": "jump",
    "label": "onto bush",
    "height": 0.4,
-   "airTime": 0.5,
-   "_why": "annotated: land on the FIRST bush, to the RIGHT of its end sign - the old 0.75s arc overflew both and came down left of the sign on the second bush. Bush 1 is fully under the ball's disk only 26.22-26.33 (measured from the frames; the sign sweeps the column 26.35-26.5), so the arc lands 26.25. No gravity-legal hop can take off from that landing and still apex over the sign, so the sign is not jumped: its post's base (y~0.90) is far below the hedge line (~0.60) - it is nearer the camera, and the ball passes BEHIND it, like the poles later in the level. Signs 2 and 3 keep their hops"
+   "airTime": 0.44,
+   "_why": "annotated: land on the FIRST bush, to the RIGHT of its end sign. Bush 1 reaches the ball's disk at ~26.19 and the sign-hop below must leave at 26.24, so the touch is 26.19-26.24 - short, but visibly ON the bush (the sink span below puts it IN the foliage)"
+  },
+  {
+   "time": 26.24,
+   "type": "jump",
+   "label": "sign, on bush",
+   "height": 0.38,
+   "airTime": 0.34,
+   "_why": "annotated: hop OVER the first sign from bush 1 and land LEFT of it on bush 2, at 26.58. IMPORTANT: Unity's VideoPlayer clock deterministically SKIPS 26.26 -> 26.53 on this file (measured in-engine, reproducible with a 3s linear run-up), so a cue inside that dead zone fires 0.25s late and desyncs. 26.24 fires on the last live frame before the skip; the arc then integrates on video time, so the skip carries it through its middle consistently with the footage. T=0.34 apexes at 26.41 and keeps the bottom above the sign top (0.34) at both crossing edges of 26.33-26.48"
   },
   {
    "time": 27.3,
@@ -216,7 +224,13 @@
    "from": 24.55,
    "to": 26.15,
    "dy": 0.135,
-   "_why": "the ball lands at 25.1 on the SAME axis it approached on - the 0.92 sidewalk plane the people stand on - so its distance from the camera is unchanged across the jump. The old +0.05 span started at the touchdown itself (only half ramped-in at 25.1, landing the ball at 0.80, visibly farther than the people) and expired at 25.8, before the 25.88 bush takeoff it should carry. This one is full from 24.95 (mid-flight, invisible) through the landing, the roll, and the bush takeoff, and fades out during the bush arc (airborne, invisible); the hedge landing at 26.63 lies beyond it untouched"
+   "_why": "the ball lands at 25.1 on the SAME axis it approached on - the 0.92 sidewalk plane the people stand on - so its distance from the camera is unchanged across the jump. The old +0.05 span started at the touchdown itself (only half ramped-in at 25.1, landing the ball at 0.80, visibly farther than the people) and expired at 25.8, before the 25.75 bush takeoff it should carry. This one is full from 24.95 (mid-flight, invisible) through the landing, the roll, and the bush takeoff, and fades out during the bush arc (airborne, invisible)"
+  },
+  {
+   "from": 25.78,
+   "to": 26.68,
+   "dy": 0.045,
+   "_why": "sink the bush-1 touch INTO the bush: tangent to the hedge's top edge the ball silhouettes against the trees behind and reads as floating. Full exactly over the grounded touch 26.18-26.28 (ramps live inside the arcs on both sides, invisible); the sign-hop landing at 26.58 gets only the ramp tail, so the bush-2 roll keeps its accepted line"
   },
   {
    "from": 41.9,
@@ -241,11 +255,6 @@
    "from": 47.2,
    "to": 56.5,
    "_why": "rolling mid-scene: visibly behind the poles it passes"
-  },
-  {
-   "from": 26.28,
-   "to": 26.75,
-   "_why": "the first hedge sign sweeps the column at 26.35-26.5 while the ball rolls bush 1 behind it; its post's base (y~0.90) is far nearer than the hedge line (~0.60). The detector loses the sign to motion blur mid-sweep (no boxes 26.3-26.45), so the earnable strip comes from the 26.5-26.7 sightings - the span reaches 26.75 to keep that track alive (2+ samples, 0.15s), occluding the sign as it exits the ball's disk, where the eye tracks it"
   }
  ],
  "occluderLabels": [
