@@ -300,9 +300,14 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
         // airHeight is measured above the TAKE-OFF line, so touchdown is where
         // the parabola meets the LIVE line - below zero when the landing spot
-        // sits lower than the take-off, above it when the ground rose.
+        // sits lower than the take-off, above it when the ground rose. Only
+        // while FALLING: a parabola cannot land on the way up, and the ground
+        // smoothing advances on wall time while the arc advances on video
+        // time - on a rising line (the 17.0s suv takeoff) one wall frame of
+        // smoothing creep exceeded the just-seeded airHeight and killed the
+        // jump the instant it started.
         float floor = takeOffGround >= 0f ? takeOffGround - smoothedGround : 0f;
-        if (airHeight <= floor)
+        if (verticalVelocity < 0f && airHeight <= floor)
         {
             airHeight = 0f;
             verticalVelocity = 0f;

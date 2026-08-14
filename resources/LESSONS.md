@@ -203,6 +203,19 @@ time each one cost.
   when a rolled surface reads wrong near a takeoff, check the adjust's
   ramp-out before blaming the measured line.
 
+- **Touchdown only while falling — and mind the two clocks.** Arcs integrate
+  on VIDEO time (30fps) but ground smoothing advances on WALL time, so on the
+  editor's in-between frames the arc is frozen while the smoothed line still
+  creeps. On a rising takeoff line (the 17.0s suv) one frame of creep
+  exceeded the just-seeded airHeight and the landing check ended the jump
+  the same instant it started — invisible to every offline mirror, which fly
+  the analytic parabola. Gate touchdown on `verticalVelocity < 0`: a
+  parabola cannot land on the way up, and the gate kills the race exactly.
+  Corollary: the offline audit proves the *intended* motion; only an
+  in-engine trace (a scene-driving PlayMode test logging stance changes)
+  proves the state machine. When a player says "it doesn't jump" and every
+  render says it does, trace the engine before re-checking the math.
+
 ## Process
 
 - **Verify every scripted edit.** Two `str.replace` patches silently no-op'd
