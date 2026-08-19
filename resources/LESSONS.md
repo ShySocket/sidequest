@@ -227,7 +227,15 @@ time each one cost.
   its middle in perfect sync with the jumped footage. (2) Chained or
   tightly-timed choreography is only proven by an in-engine stance trace
   WITH a clock-jump detector (log `videoTime` deltas > 0.09s) — offline
-  mirrors assume a continuous clock and cannot see any of this.
+  mirrors assume a continuous clock and cannot see any of this. (3) A
+  clearance proven mid-arc is worthless if its frames fall inside the dead
+  zone: the 26.24 sign hop audited clean at T=0.34, but its whole
+  over-the-sign passage (26.33-26.48) was swallowed by the skip, and the
+  first frame the player saw (26.53) showed the ball back at sign-face
+  height — reading as slipped-past, not jumped-over. Author the arc so the
+  story is told at the frames the player actually sees (T=0.44 held the
+  ball above the sign top AT 26.53); render those exact frames, not just
+  the crossing, as the acceptance check.
 
 ## Process
 

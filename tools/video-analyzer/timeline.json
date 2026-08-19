@@ -104,16 +104,16 @@
    "type": "jump",
    "label": "onto bush",
    "height": 0.4,
-   "airTime": 0.44,
-   "_why": "annotated: land on the FIRST bush, to the RIGHT of its end sign. Bush 1 reaches the ball's disk at ~26.19 and the sign-hop below must leave at 26.24, so the touch is 26.19-26.24 - short, but visibly ON the bush (the sink span below puts it IN the foliage)"
+   "airTime": 0.48,
+   "_why": "annotated: land on the FIRST bush, to the RIGHT of its end sign. The old 26.19 landing touched down on AIR: bush 1's foliage corner only reaches the ball's disk at ~26.22 (rendered frames 26.17-26.20 show the touch right of the corner). Landing at 26.23 puts the touchdown frame ON the foliage - the exact frame the user sees before the 26.26->26.53 decoder skip - and the sign-hop leaves at 26.24, a one-frame touch (chain is the annotated intent; the sink span below puts it IN the foliage)"
   },
   {
    "time": 26.24,
    "type": "jump",
    "label": "sign, on bush",
-   "height": 0.38,
-   "airTime": 0.34,
-   "_why": "annotated: hop OVER the first sign from bush 1 and land LEFT of it on bush 2, at 26.58. IMPORTANT: Unity's VideoPlayer clock deterministically SKIPS 26.26 -> 26.53 on this file (measured in-engine, reproducible with a 3s linear run-up), so a cue inside that dead zone fires 0.25s late and desyncs. 26.24 fires on the last live frame before the skip; the arc then integrates on video time, so the skip carries it through its middle consistently with the footage. T=0.34 apexes at 26.41 and keeps the bottom above the sign top (0.34) at both crossing edges of 26.33-26.48"
+   "height": 0.4,
+   "airTime": 0.44,
+   "_why": "annotated: hop OVER the first sign from bush 1 and land LEFT of it on bush 2. IMPORTANT: Unity's VideoPlayer clock deterministically SKIPS 26.26 -> 26.53 on this file (measured in-engine, reproducible with a 3s linear run-up), so a cue inside that dead zone fires 0.25s late and desyncs. 26.24 fires on the last live frame before the skip; the arc integrates on video time so the skip carries it through its middle. The old T=0.34 cleared the 26.33-26.48 crossing but landed 26.58 - at 26.53, the FIRST frame the player sees after the skip, the ball was already down at sign-face height and read as slipping past, not over. T=0.44/h=0.40 keeps the ball's bottom above the sign top (0.34) AT 26.53 (lift ~0.36, bottom ~0.24) and lands 26.68, exactly where the sink span's ramp-out reaches zero, so bush 2's roll keeps its accepted line"
   },
   {
    "time": 27.3,
