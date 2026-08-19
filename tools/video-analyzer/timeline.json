@@ -111,9 +111,9 @@
    "time": 26.24,
    "type": "jump",
    "label": "sign, on bush",
-   "height": 0.4,
-   "airTime": 0.44,
-   "_why": "annotated: hop OVER the first sign from bush 1 and land LEFT of it on bush 2. IMPORTANT: Unity's VideoPlayer clock deterministically SKIPS 26.26 -> 26.53 on this file (measured in-engine, reproducible with a 3s linear run-up), so a cue inside that dead zone fires 0.25s late and desyncs. 26.24 fires on the last live frame before the skip; the arc integrates on video time so the skip carries it through its middle. The old T=0.34 cleared the 26.33-26.48 crossing but landed 26.58 - at 26.53, the FIRST frame the player sees after the skip, the ball was already down at sign-face height and read as slipping past, not over. T=0.44/h=0.40 keeps the ball's bottom above the sign top (0.34) AT 26.53 (lift ~0.36, bottom ~0.24) and lands 26.68, exactly where the sink span's ramp-out reaches zero, so bush 2's roll keeps its accepted line"
+   "height": 0.42,
+   "airTime": 0.46,
+   "_why": "annotated: hop OVER the first sign from bush 1 and land LEFT of it on bush 2. IMPORTANT: Unity's VideoPlayer clock deterministically SKIPS 26.26 -> 26.53 on this file (measured in-engine, reproducible with a 3s linear run-up), so a cue inside that dead zone fires 0.25s late and desyncs. 26.24 fires on the last live frame before the skip; the arc integrates on video time so the skip carries it through its middle. The story must be told at the frames the player SEES: bottom above the sign top at 26.53 (first post-skip frame). h=0.40/T=0.44 did that but grazed the crossing end at only 0.024 above the sign top at 26.48 - legal, but reads as touching (user report). h=0.42/T=0.46 clears the whole 26.33-26.53 span by >=0.1 and lands 26.70, past the sink span's ramp-out, so bush 2's roll keeps its accepted line"
   },
   {
    "time": 27.3,
@@ -228,9 +228,9 @@
   },
   {
    "from": 25.78,
-   "to": 26.68,
-   "dy": 0.045,
-   "_why": "sink the bush-1 touch INTO the bush: tangent to the hedge's top edge the ball silhouettes against the trees behind and reads as floating. Full exactly over the grounded touch 26.18-26.28 (ramps live inside the arcs on both sides, invisible); the sign-hop landing at 26.58 gets only the ramp tail, so the bush-2 roll keeps its accepted line"
+   "to": 26.7,
+   "dy": 0.015,
+   "_why": "settle the bush-1 touch just barely INTO the foliage. 0.045 buried a third of the ball and the touch read as IN FRONT of the bush, not ON TOP of it (user report); 0.015 keeps the bottom overlapping leaves (no floating-tangent silhouette) while the ball clearly sits on the top edge. Full over the grounded touch 26.18-26.28; ramp-out ends at the 26.70 sign-hop landing so bush 2's roll keeps its accepted line"
   },
   {
    "from": 41.9,

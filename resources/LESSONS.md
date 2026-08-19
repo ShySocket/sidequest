@@ -237,6 +237,18 @@ time each one cost.
   ball above the sign top AT 26.53); render those exact frames, not just
   the crossing, as the acceptance check.
 
+- **A legal clearance can still read as a hit — margins under ~0.05 are
+  overlap to the eye.** The 26.24 sign hop passed the overlap audit with the
+  ball's bottom 0.024 above the sign top at the crossing's end, and the user
+  called it "overlap" anyway: at speed, with the ball's soft edge, a few
+  percent of frame height is indistinguishable from touching. Same family:
+  a pathAdjust that sank the bush touch 0.045 (a third of the ball) into
+  foliage read as "in front of the bush", not on top — depth cues this small
+  resolve to the wrong story. Author for DECISIVE separation: half a ball
+  diameter (~0.05-0.08) above a cleared obstacle, and no more than ~0.015 of
+  deliberate sink into a supporting surface. The audit's zero-intersection
+  gate is the floor, not the standard.
+
 ## Process
 
 - **Verify every scripted edit.** Two `str.replace` patches silently no-op'd
