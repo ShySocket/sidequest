@@ -102,6 +102,10 @@ class LevelAuditor:
         self.path_d = np.array([p["d"] for p in self.level["path"]])
         self.path_y = np.array([p["y"] for p in self.level["path"]])
         self.path_x = np.array([p["x"] for p in self.level["path"]])
+        # The size (depth) line: where the surface STANDS. Falls back to the
+        # ride line for levels authored before sizeDepth existed - the exact
+        # fallback the game uses (VideoLevel.SizeGroundAtDistance).
+        self.path_z = np.array([p.get("z", 0.0) or p["y"] for p in self.level["path"]])
         self.path_s = [p["s"] for p in self.level["path"]]
 
         surfaces = load_surfaces(surfaces_path)
@@ -133,6 +137,11 @@ class LevelAuditor:
     def ground_at(self, distance: float) -> float:
         return float(np.interp(distance, self.path_d, self.path_y))
 
+    def size_ground_at(self, distance: float) -> float:
+        """The line the ball's SIZE reads its depth from - the surface's
+        ground-plane stand, not its (possibly elevated) top edge."""
+        return float(np.interp(distance, self.path_d, self.path_z))
+
     def column_at(self, distance: float) -> float:
         return float(np.interp(distance, self.path_d, self.path_x))
 
@@ -146,7 +155,7 @@ class LevelAuditor:
         return self.marker_diameter * float(np.interp(depth, [0, 1], [0.82, 1.2]))
 
     def diameter_at(self, distance: float) -> float:
-        return self.diameter_of(self.ground_at(distance))
+        return self.diameter_of(self.size_ground_at(distance))
 
     def arc_params(
         self, takeoff: float, height: float, duration: float
@@ -176,13 +185,17 @@ class LevelAuditor:
         gravity: float,
         speed: float,
         height: float,
+        start_size: float | None = None,
     ) -> tuple[float, float]:
         """(lift above the live ground, diameter) mid-arc, as the game renders.
 
         The ball's bottom follows the parabola above the take-off line; its
         size holds the take-off spot's depth through the rise and eases into
         the landing spot's across the descent (square root of the fallen
-        fraction - the descent's own clock - smoothstepped).
+        fraction - the descent's own clock - smoothstepped). Size depth reads
+        the SIZE line (size_ground_at), which stands on the ground plane even
+        where the ride line is elevated; ``start_size`` is that line's value
+        at the take-off spot (defaults to ``start`` for callers predating it).
         """
         air = speed * since_takeoff - 0.5 * gravity * since_takeoff**2
         ground = self.ground_at(distance)
@@ -194,7 +207,8 @@ class LevelAuditor:
                 (height - air) / max(height + drop, 1e-4), 0.0, 1.0))
             clock = np.sqrt(fallen)
             eased = float(clock * clock * (3.0 - 2.0 * clock))
-        size_ground = start + (ground - start) * eased
+        origin = start if start_size is None else start_size
+        size_ground = origin + (self.size_ground_at(distance) - origin) * eased
         return lift, self.diameter_of(size_ground)
 
     def arc(self, height: float, air_time: float = 0.0) -> tuple[float, float]:
@@ -469,6 +483,7 @@ class LevelAuditor:
             height, duration = self.arc(event.get("height", 0.0), event.get("airTime", 0.0))
             takeoff = float(event["time"])
             start, drop, gravity, speed = self.arc_params(takeoff, height, duration)
+            start_size = self.size_ground_at(self.distance_at(takeoff))
             # The parabola peaks where its velocity crosses zero - earlier
             # than mid-arc when the landing sits lower than the take-off.
             peak_time = takeoff + speed / gravity
@@ -493,7 +508,8 @@ class LevelAuditor:
                 # carried by the arc adds to the clearance the vault actually
                 # shows on screen.
                 lift, diameter = self.arc_state_at(
-                    distance, step, start, drop, gravity, speed, height)
+                    distance, step, start, drop, gravity, speed, height,
+                    start_size)
                 radius = diameter * 0.5
 
                 for box in self.obstacle_boxes(time):
@@ -610,6 +626,7 @@ class LevelAuditor:
             height, duration = self.arc(event.get("height", 0.0), event.get("airTime", 0.0))
             takeoff = float(event["time"])
             start, drop, gravity, speed = self.arc_params(takeoff, height, duration)
+            start_size = self.size_ground_at(self.distance_at(takeoff))
 
             worst = 0.0
             worst_detail = ""
@@ -621,7 +638,8 @@ class LevelAuditor:
                 # The rendered bottom follows the parabola (never below the
                 # live line), same as the game.
                 lift, diameter = self.arc_state_at(
-                    distance, step, start, drop, gravity, speed, height)
+                    distance, step, start, drop, gravity, speed, height,
+                    start_size)
                 # Slightly under the drawn radius: the shading rolls off at
                 # the rim, so a mathematical tangency does not read as touch.
                 ry = diameter * 0.5 * 0.85

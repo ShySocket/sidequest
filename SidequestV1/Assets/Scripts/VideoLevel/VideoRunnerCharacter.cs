@@ -88,6 +88,9 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     float smoothedGround = -1f;
     float groundVelocity;
     float takeOffGround = -1f;
+    float smoothedSizeGround = -1f;
+    float sizeGroundVelocity;
+    float takeOffSizeGround = -1f;
     float arcDrop;
     float arcGravity;
     float arcTakeOffSpeed;
@@ -402,6 +405,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         // same gravity, instead of blending the terrain drop into the descent
         // (which kicked in right after the apex and read as a lurch).
         takeOffGround = smoothedGround;
+        takeOffSizeGround = smoothedSizeGround;
         float duration = Mathf.Max(ArcDuration(), 0.01f);
         float landDistance = director.Level.DistanceAtTime(cue.time + duration);
         // Never land above your own apex: a corrupt prediction would make the
@@ -499,6 +503,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
         float column = director.Level.ColumnAtDistance(distance);
         float groundY = director.Level.GroundAtDistance(distance);
+        float sizeGroundY = director.Level.SizeGroundAtDistance(distance);
 
         // Critically damped follow, so the ball eases onto changes in the ground
         // line and its lane instead of tracking every sample exactly.
@@ -506,15 +511,19 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         {
             smoothedGround = groundY;
             smoothedColumn = column;
+            smoothedSizeGround = sizeGroundY;
         }
 
         smoothedGround = Mathf.SmoothDamp(
             smoothedGround, groundY, ref groundVelocity, groundSmoothing);
         smoothedColumn = Mathf.SmoothDamp(
             smoothedColumn, column, ref columnVelocity, columnSmoothing);
+        smoothedSizeGround = Mathf.SmoothDamp(
+            smoothedSizeGround, sizeGroundY, ref sizeGroundVelocity, groundSmoothing);
 
         groundY = smoothedGround;
         column = smoothedColumn;
+        float sizeGroundNow = smoothedSizeGround;
 
         int heading = director.Level.TravelDirection;
 
@@ -528,6 +537,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             float phase = Mathf.Sin(
                 Mathf.PI * Mathf.Clamp01(dodgeElapsed / ActiveDodgeDuration()));
             groundY += dodgeDepth * phase;
+            sizeGroundNow += dodgeDepth * phase;
             column += dodgeDistance * phase * -heading;
         }
 
@@ -548,10 +558,12 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         // measured above the take-off line; only the SIZE eases from the
         // take-off spot's depth to the landing spot's across the descent,
         // arriving exactly at touchdown. The shadow stays on the live terrain
-        // line below and reads the altitude honestly.
-        float sizeGround = stance == Stance.Airborne && takeOffGround >= 0f
-            ? Mathf.Lerp(takeOffGround, groundY, DescentFraction())
-            : groundY;
+        // line below and reads the altitude honestly. Depth reads the SIZE
+        // line, which stands on the ground plane even where the ride line is
+        // elevated (a hedge top is height, not distance).
+        float sizeGround = stance == Stance.Airborne && takeOffSizeGround >= 0f
+            ? Mathf.Lerp(takeOffSizeGround, sizeGroundNow, DescentFraction())
+            : sizeGroundNow;
         Vector2 range = director.Level.PathDepthRange;
         float depth = Mathf.InverseLerp(range.x, range.y, sizeGround);
 
@@ -636,6 +648,9 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         smoothedGround = -1f;
         smoothedColumn = -1f;
         takeOffGround = -1f;
+        smoothedSizeGround = -1f;
+        takeOffSizeGround = -1f;
+        sizeGroundVelocity = 0f;
         arcDrop = 0f;
         arcGravity = 0f;
         arcTakeOffSpeed = 0f;

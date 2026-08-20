@@ -65,7 +65,12 @@ the ball red and the motion happens anyway). Consequences:
   which is `r · height/width` ≈ 0.56·r). This interval, read from
   measurements, decides takeoffs and landings.
 - Ball diameter is `markerDiameter` (0.138 of frame height) scaled 0.82–1.2 by
-  where the ground line sits between the path's 5th/95th percentile heights.
+  where the SIZE line sits between the path's 5th/95th percentile heights. The
+  size line (baked per path sample as `z`) equals the ride line except across
+  `sizeDepth` spans: an elevated surface's top edge is position, not distance —
+  a hedge top rides high on screen while the bush stands at the sidewalk's near
+  edge — and sizing from the top edge shrinks the ball as if it had run from
+  the camera.
 
 ## Event schema (timeline.json)
 
@@ -87,7 +92,10 @@ the ball red and the motion happens anyway). Consequences:
 
 Other timeline sections: `surfaces` (named spans; the ledge extraction supplies
 exact heights), `pathAdjust` ({from,to,dy} nudges eased over 0.4s — design
-intent on top of measurement), `behindSpans` / `frontSpans` (force/suppress
+intent on top of measurement), `sizeDepth` ({from,to,y} spans declaring the
+ground-plane y the ball's SIZE reads its depth from, where the ride line is
+elevated; place edges mid-arc — each ramps 0.3s between the depth y and the
+ride line's value at that edge), `behindSpans` / `frontSpans` (force/suppress
 occlusion where the depth rule mis-reads), `occluderLabels` (classes allowed to
 occlude; currently pole, traffic sign, car), `hidden` (ball off-screen spans —
 both edges get a dust-puff in game).

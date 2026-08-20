@@ -140,6 +140,15 @@ class Timeline:
     occluder_labels: list[str] = None  # type: ignore[assignment]
     """Detection classes the ball may pass behind; None = occlude.py default."""
 
+    size_depth: list[dict] = None  # type: ignore[assignment]
+    """Spans of {from,to,y}: the ground-plane y the ball's SIZE reads its depth
+    from, where it differs from the ride line. An elevated surface's top edge
+    is position, not distance - a hedge top rides high on screen while the
+    bush stands at the sidewalk's near edge - and sizing from the top edge
+    shrinks the ball as if it had run away from the camera. Place the span
+    edges mid-arc: each edge ramps over 0.3s between the depth y and the ride
+    line's value AT that edge, and inside a flight the ramp is invisible."""
+
     @staticmethod
     def load(path: Path) -> Timeline:
         raw = json.loads(path.read_text())
@@ -156,6 +165,7 @@ class Timeline:
             behind_spans=raw.get("behindSpans", []),
             front_spans=raw.get("frontSpans", []),
             occluder_labels=raw.get("occluderLabels"),
+            size_depth=raw.get("sizeDepth", []),
         )
 
 
@@ -266,14 +276,36 @@ def build_authored_level(
         ramp_out = np.clip((end - sample_times) / 0.4, 0.0, 1.0)
         blended = blended + float(span["dy"]) * np.minimum(ramp_in, ramp_out)
 
+    # The SIZE line: depth is where a surface stands, not how tall it is. It
+    # equals the ride line except across sizeDepth spans, whose edges ramp
+    # over 0.3s between the declared depth y and the ride line's value AT the
+    # edge (a constant, so the ramp never dips through the transition ease the
+    # ride line itself is doing there).
+    size_line = blended.copy()
+    for span in timeline.size_depth or []:
+        start, end = float(span["from"]), float(span["to"])
+        depth_y = float(span["y"])
+        edge_in = float(np.interp(start, sample_times, blended))
+        edge_out = float(np.interp(end, sample_times, blended))
+        inside = (sample_times >= start) & (sample_times <= end)
+        ramp_in = np.clip((sample_times - start) / 0.3, 0.0, 1.0)
+        ramp_out = np.clip((end - sample_times) / 0.3, 0.0, 1.0)
+        values = (
+            depth_y
+            + (edge_in - depth_y) * (1.0 - ramp_in)
+            + (edge_out - depth_y) * (1.0 - ramp_out)
+        )
+        size_line = np.where(inside, values, size_line)
+
     path = [
         {
             "d": round(float(distance_map.distance_at(t)), 3),
             "y": round(float(y), 5),
             "x": round(float(x), 5),
+            "z": round(float(z), 5),
             "s": name,
         }
-        for t, y, x, name in zip(sample_times, blended, columns, names)
+        for t, y, x, z, name in zip(sample_times, blended, columns, size_line, names)
     ]
 
     # Screen speed, in frame widths per second. The ball needs this to roll

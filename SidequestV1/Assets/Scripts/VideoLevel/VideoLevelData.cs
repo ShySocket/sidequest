@@ -84,6 +84,16 @@ public class VideoLevelPathPoint
     /// </remarks>
     public float x;
 
+    /// <summary>Ground line the ball's SIZE reads its depth from, when it
+    /// differs from <c>y</c>. Zero = same as <c>y</c>.</summary>
+    /// <remarks>
+    /// An elevated surface's top edge is position, not distance: a hedge top
+    /// rides high on screen while the bush stands at the sidewalk's near edge,
+    /// and sizing from the top edge shrank the ball as if it had run away from
+    /// the camera. The analyzer bakes the surface's ground-plane stand here.
+    /// </remarks>
+    public float z;
+
     public string s;
 }
 

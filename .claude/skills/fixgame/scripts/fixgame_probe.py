@@ -55,6 +55,9 @@ class Level:
         self.pd = np.array([p["d"] for p in self.data["path"]])
         self.py = np.array([p["y"] for p in self.data["path"]])
         self.px = np.array([p["x"] for p in self.data["path"]])
+        # The SIZE (depth) line: where the surface stands. Old levels carry no
+        # z; fall back to the ride line, same as the game.
+        self.pz = np.array([p.get("z", 0.0) or p["y"] for p in self.data["path"]])
         self.ps = [p["s"] for p in self.data["path"]]
         heights = np.sort(self.py)
         self.far = float(heights[int(len(heights) * 0.05)])
@@ -108,19 +111,22 @@ class Level:
 
     def size_ground(self, t: float) -> float:
         """Depth driving the ball's size: take-off's through the rise, easing
-        into the landing spot's across the descent."""
+        into the landing spot's across the descent. Reads the SIZE line (z),
+        which stands on the ground plane even where the ride line is elevated."""
         arc = self._arc_at(t)
         if arc is None:
-            return self.ground(t)
+            return float(np.interp(self.distance(t), self.pd, self.pz))
         tk, h, air, start, drop, grav, v0, label = arc
+        start_size = float(np.interp(self.distance(tk), self.pd, self.pz))
         s = t - tk
         if v0 - grav * s >= 0:
-            return start
+            return start_size
         raw = v0 * s - 0.5 * grav * s * s
         fallen = float(np.clip((h - raw) / max(h + drop, 1e-4), 0, 1))
         clock = np.sqrt(fallen)
         eased = clock * clock * (3 - 2 * clock)
-        return start + (self.ground(t) - start) * eased
+        land_size = float(np.interp(self.distance(t), self.pd, self.pz))
+        return start_size + (land_size - start_size) * eased
 
     def radius(self, t: float) -> float:
         span = self.near - self.far

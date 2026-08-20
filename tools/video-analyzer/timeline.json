@@ -111,9 +111,9 @@
    "time": 26.24,
    "type": "jump",
    "label": "sign, on bush",
-   "height": 0.42,
+   "height": 0.4,
    "airTime": 0.46,
-   "_why": "annotated: hop OVER the first sign from bush 1 and land LEFT of it on bush 2. IMPORTANT: Unity's VideoPlayer clock deterministically SKIPS 26.26 -> 26.53 on this file (measured in-engine, reproducible with a 3s linear run-up), so a cue inside that dead zone fires 0.25s late and desyncs. 26.24 fires on the last live frame before the skip; the arc integrates on video time so the skip carries it through its middle. The story must be told at the frames the player SEES: bottom above the sign top at 26.53 (first post-skip frame). h=0.40/T=0.44 did that but grazed the crossing end at only 0.024 above the sign top at 26.48 - legal, but reads as touching (user report). h=0.42/T=0.46 clears the whole 26.33-26.53 span by >=0.1 and lands 26.70, past the sink span's ramp-out, so bush 2's roll keeps its accepted line"
+   "_why": "annotated: hop OVER the first sign from bush 1 and land LEFT of it on bush 2. IMPORTANT: Unity's VideoPlayer clock deterministically SKIPS 26.26 -> 26.53 on this file (measured in-engine, reproducible with a 3s linear run-up), so a cue inside that dead zone fires 0.25s late and desyncs. 26.24 fires on the last live frame before the skip; the arc integrates on video time so the skip carries it through its middle. The story must be told at the frames the player SEES: bottom above the sign top at 26.53 (first post-skip frame), and decisive daylight (>=0.05) through the whole 26.33-26.53 crossing - a 0.024 graze read as overlap (user report). The -0.05 seat adjust raised the takeoff line, which buys that margin at h=0.40; taller would poke the (now sidewalk-sized, sizeDepth) ball off the frame top at the apex. Lands 26.70, past the seat adjust's ramp-out, on bush 2's accepted line"
   },
   {
    "time": 27.3,
@@ -207,6 +207,14 @@
    "to": 75.0
   }
  ],
+ "sizeDepth": [
+  {
+   "from": 26.0,
+   "to": 29.5,
+   "y": 0.95,
+   "_why": "the bushes stand at the sidewalk's NEAR edge (base ~0.95), but the ball rides their TOP edge (~0.60-0.66) and the depth-from-screen-height rule shrank it ~25% across the 25.75 hop as if it had run away from the camera (user report). Size reads this ground-plane line across the whole bush section instead; edges sit mid-arc (26.0 inside the bush hop's flight, 29.5 inside the 29.2 off-the-hedge flight, which lands on the lot at 29.8 where the ride line ~0.83 takes over) so both 0.3s ramps are invisible"
+  }
+ ],
  "pathAdjust": [
   {
    "from": 19.39,
@@ -229,8 +237,8 @@
   {
    "from": 25.78,
    "to": 26.7,
-   "dy": 0.015,
-   "_why": "settle the bush-1 touch just barely INTO the foliage. 0.045 buried a third of the ball and the touch read as IN FRONT of the bush, not ON TOP of it (user report); 0.015 keeps the bottom overlapping leaves (no floating-tangent silhouette) while the ball clearly sits on the top edge. Full over the grounded touch 26.18-26.28; ramp-out ends at the 26.70 sign-hop landing so bush 2's roll keeps its accepted line"
+   "dy": -0.05,
+   "_why": "seat the bush-1 touch ON the bush's top edge. The sidewalk->hedge surface step eases over ~0.45s and has NOT converged at the 26.23 touch: the raw line there is 0.667 while the bush's top contour at the corner is ~0.615, so the ball seated visibly BELOW the top edge (user report, twice). -0.05 lands the bottom at ~0.617, on the contour. Full over the grounded touch 26.18-26.28; ramp-out ends at the 26.70 sign-hop landing so bush 2's roll keeps its accepted line"
   },
   {
    "from": 41.9,

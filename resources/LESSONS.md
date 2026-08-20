@@ -249,6 +249,21 @@ time each one cost.
   deliberate sink into a supporting surface. The audit's zero-intersection
   gate is the floor, not the standard.
 
+- **Screen height is depth ONLY on the ground plane — an elevated surface's
+  top edge is height, not distance.** The size rule (ground line between the
+  path's depth percentiles) shrank the ball ~25% in 0.24s when it hopped
+  onto the bushes, as if it had sprinted away from the camera, when the bush
+  stands at the sidewalk's NEAR edge. The fix is the `sizeDepth` timeline
+  section: a {from,to,y} span declaring the ground-plane y the SIZE reads
+  while the ride line is elevated, baked per path sample as `z` (game:
+  `SizeGroundAtDistance`; audit: `size_ground_at`; both ease takeoff→landing
+  size across a descent as before). Place span edges mid-arc so the 0.3s
+  edge ramps are invisible. Related: the same proxy failure is why elevated
+  surfaces suppress occlusion derivation. And check the SEAT of a surface
+  handover too: the sidewalk→hedge surface step eases over ~0.45s, and the
+  26.23 bush touch landed before the ease converged, seating the ball ~0.05
+  BELOW the bush top — a pathAdjust fixes the seat, sized from the probe.
+
 ## Process
 
 - **Verify every scripted edit.** Two `str.replace` patches silently no-op'd

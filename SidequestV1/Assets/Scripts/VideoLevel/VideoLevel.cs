@@ -179,6 +179,38 @@ public sealed class VideoLevel
         return Mathf.Lerp(a.y, b.y, alpha);
     }
 
+    /// <summary>The line the ball's SIZE reads its depth from at a distance.</summary>
+    /// <remarks>
+    /// Equal to the ride line except where the level bakes a depth line: an
+    /// elevated surface's top edge is position, not distance, so the ball
+    /// riding a hedge keeps the size of the ground the bush stands on. Levels
+    /// authored before this carry no <c>z</c> and fall back to <c>y</c>.
+    /// </remarks>
+    public float SizeGroundAtDistance(float distance)
+    {
+        int index = UpperBound(pathDistances, distance);
+        if (index <= 0)
+        {
+            return SizeY(data.path[0]);
+        }
+
+        if (index >= data.path.Count)
+        {
+            return SizeY(data.path[data.path.Count - 1]);
+        }
+
+        VideoLevelPathPoint a = data.path[index - 1];
+        VideoLevelPathPoint b = data.path[index];
+        float span = b.d - a.d;
+        float alpha = span > 0f ? Mathf.Clamp01((distance - a.d) / span) : 0f;
+        return Mathf.Lerp(SizeY(a), SizeY(b), alpha);
+    }
+
+    static float SizeY(VideoLevelPathPoint point)
+    {
+        return point.z > 0f ? point.z : point.y;
+    }
+
     /// <summary>Horizontal position of the character at a distance, 0..1.</summary>
     /// <remarks>
     /// Per-sample rather than one fixed column: the tracked marker traverses the
