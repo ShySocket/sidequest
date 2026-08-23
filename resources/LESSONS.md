@@ -247,7 +247,14 @@ time each one cost.
   resolve to the wrong story. Author for DECISIVE separation: half a ball
   diameter (~0.05-0.08) above a cleared obstacle, and no more than ~0.015 of
   deliberate sink into a supporting surface. The audit's zero-intersection
-  gate is the floor, not the standard.
+  gate is the floor, not the standard. Follow-up that settled it: after two
+  more "still reads as in front" rounds on the bush seat, rendering FIVE
+  candidate heights on the real frame and letting the user pick won in one
+  round (they chose the highest: bottom ~0.04 ABOVE the measured top edge, a
+  visible sliver of daylight - more than any tuned guess would have dared).
+  For a look-preference fix, mock the configurations on the actual frame
+  (cv2 circle on the extracted frame, no re-author needed) and elicit; do
+  not iterate blind.
 
 - **Screen height is depth ONLY on the ground plane — an elevated surface's
   top edge is height, not distance.** The size rule (ground line between the
