@@ -61,7 +61,7 @@ public sealed class GpsStatusIndicator : MonoBehaviour
         }
     }
 
-    private static string GetStatusText(SpeedProviderMode mode, GpsTrackingState state)
+    public static string GetStatusText(SpeedProviderMode mode, GpsTrackingState state)
     {
         if (mode == SpeedProviderMode.Mock && state != GpsTrackingState.SignalLost)
         {

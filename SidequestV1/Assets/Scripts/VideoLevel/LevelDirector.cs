@@ -78,6 +78,7 @@ public sealed class LevelDirector : MonoBehaviour
     const float SeekTimeout = 1.5f;
 
     public VideoLevel Level => level;
+    public VehicleSpeedController VehicleController => vehicleSpeedController;
     public float Distance => distance;
     public float VideoTime => videoTime;
     public float Progress => level != null && level.TotalDistance > 0f

@@ -25,5 +25,17 @@ mkdir -p "$target"
 cp "$video" "$target/"
 cp "$level" "$target/"
 
+# The occluder silhouette atlas, when the author pass baked one. Its name is
+# recorded inside the level file, so it is read from there rather than guessed.
+atlas="$(python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get('foregroundMaskFile',''))" "$level")"
+if [[ -n "$atlas" ]]; then
+  if [[ -f "$(dirname "$level")/$atlas" ]]; then
+    cp "$(dirname "$level")/$atlas" "$target/"
+  else
+    echo "error: level names occluder atlas '$atlas' but it is not next to the level" >&2
+    exit 1
+  fi
+fi
+
 echo "copied into $target:"
 ls -lh "$target" | tail -n +2

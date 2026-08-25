@@ -44,6 +44,13 @@ run uv run analyze audit --level "$out.authored.json" \
     --surfaces "$out.surfaces.npz" --ledges "$out.ledges.npz" \
     --detections "$out.detections.json"
 
+# Occlusion gate + eyeball check: --verify steps the whole level through the
+# game's own strip logic and fails if any frame erases ball pixels with no
+# detected object there; the stills are the human acceptance test on top.
+run uv run analyze occluders "$clip" --level "$out.authored.json" \
+    --detections "$out.detections.json" --verify \
+    -o "out/$name.occluders"
+
 run ./copy-to-unity.sh "$out.play.mp4" "$out.authored.json"
 
 echo

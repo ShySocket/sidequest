@@ -1,0 +1,46 @@
+{
+    "version": 1,
+    "name": "RunnerInputActions",
+    "maps": [
+        {
+            "name": "Gameplay",
+            "id": "3ad06656-0a10-41b4-9eb4-d370acf62cad",
+            "actions": [
+                {
+                    "name": "Jump",
+                    "type": "Button",
+                    "id": "bbbdcaef-d98f-42d2-9a18-b993a2114b58",
+                    "expectedControlType": "Button",
+                    "processors": "",
+                    "interactions": "",
+                    "initialStateCheck": false
+                }
+            ],
+            "bindings": [
+                {
+                    "name": "",
+                    "id": "ff378503-b8f8-4f8e-ad4a-a45dc2e78944",
+                    "path": "<Keyboard>/space",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Jump",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                },
+                {
+                    "name": "",
+                    "id": "14c1f175-d367-4abc-b730-2e7842ff3244",
+                    "path": "<Touchscreen>/primaryTouch/press",
+                    "interactions": "",
+                    "processors": "",
+                    "groups": "",
+                    "action": "Jump",
+                    "isComposite": false,
+                    "isPartOfComposite": false
+                }
+            ]
+        }
+    ],
+    "controlSchemes": []
+}

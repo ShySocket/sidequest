@@ -13,18 +13,12 @@ public sealed class VideoRunnerHud : MonoBehaviour
 {
     const float UpcomingSeconds = 1.2f;
 
-    const string Controls =
-        "SPACE / tap = jump    DOWN or S = dodge    R = restart    "
-        + "- / = speed    LEFT / RIGHT = scrub 5s    T = timer    F1 = hide";
-
     [SerializeField] LevelDirector director;
     [SerializeField] VideoRunnerCharacter character;
-    [SerializeField] bool showDebug = true;
 
     [Tooltip("Large top-left clock, for noting the time of anything worth changing.")]
     [SerializeField] bool showTimer = true;
 
-    GUIStyle heading;
     GUIStyle body;
     GUIStyle cue;
     GUIStyle timer;
@@ -37,8 +31,7 @@ public sealed class VideoRunnerHud : MonoBehaviour
     // only read during OnGUI.
     const float TextRefreshInterval = 0.1f;
     float textRefreshedAt = -1f;
-    string scoreText = string.Empty;
-    string statusText = string.Empty;
+    string gpsText = string.Empty;
     string cueText;
     float cueAlpha;
 
@@ -72,8 +65,15 @@ public sealed class VideoRunnerHud : MonoBehaviour
 
     void Update()
     {
-        if (director == null || Keyboard.current == null)
+        if (director == null)
         {
+            return;
+        }
+
+        // No keyboard on a phone; the readouts still have to refresh there.
+        if (Keyboard.current == null)
+        {
+            RefreshText();
             return;
         }
 
@@ -93,13 +93,7 @@ public sealed class VideoRunnerHud : MonoBehaviour
             director.SpeedMultiplier -= 0.25f;
         }
 
-        if (Keyboard.current.f1Key.wasPressedThisFrame)
-        {
-            showDebug = !showDebug;
-        }
-
-        // Its own toggle, not F1's: the timer stays up while the verbose rows
-        // are hidden, and can still be cleared away for a clean capture.
+        // Lets the clock be cleared away for a clean capture.
         if (Keyboard.current.tKey.wasPressedThisFrame)
         {
             showTimer = !showTimer;
@@ -175,25 +169,58 @@ public sealed class VideoRunnerHud : MonoBehaviour
         }
 
         textRefreshedAt = Time.unscaledTime;
-        scoreText =
-            $"{character.Cleared} cleared   {character.Missed} missed   /  {character.TotalEvents}";
-        statusText =
-            $"t {director.VideoTime:0.00}s    d {director.Distance:0}    "
-            + $"{director.Progress * 100f:0}%    x{director.SpeedMultiplier:0.00}    "
-            + $"{character.CurrentStance}";
+        RefreshGpsText();
+    }
+
+    /// <summary>
+    /// GPS connection and speed estimate, same wording as the RunnerPrototype
+    /// indicator. Empty when nothing drives progress from vehicle speed
+    /// (NativeRate at a desk), so the line only appears when it means something.
+    /// </summary>
+    void RefreshGpsText()
+    {
+        VehicleSpeedController vehicle = director.VehicleController;
+        if (vehicle == null)
+        {
+            gpsText = string.Empty;
+            return;
+        }
+
+        string status = GpsStatusIndicator.GetStatusText(
+            vehicle.ActiveProviderMode, vehicle.TrackingState);
+
+        float speed = vehicle.LastKnownPhysicalSpeed;
+        string speedLabel;
+        if (vehicle.IsUsingHeldSpeed)
+        {
+            speedLabel = $"Holding {speed:0.0} m/s";
+        }
+        else if (vehicle.ActiveProviderMode == SpeedProviderMode.Mock)
+        {
+            speedLabel = $"Mock {speed:0.0} m/s";
+        }
+        else if (vehicle.TrackingState == GpsTrackingState.Tracking)
+        {
+            speedLabel = $"Live {speed:0.0} m/s";
+        }
+        else
+        {
+            speedLabel = "Speed 0.0 m/s";
+        }
+
+        gpsText = $"{status}    {speedLabel}    game {vehicle.GameSpeed:0.0}";
     }
 
     void EnsureStyles()
     {
-        if (heading != null)
+        if (body != null)
         {
             return;
         }
 
-        heading = new GUIStyle(GUI.skin.label) { fontSize = 26, fontStyle = FontStyle.Bold };
-        heading.normal.textColor = Color.white;
-
-        body = new GUIStyle(GUI.skin.label) { fontSize = 16 };
+        // Bigger than the old debug rows: this is now read at a glance from a
+        // phone in a mount, not squinted at on a desktop monitor.
+        body = new GUIStyle(GUI.skin.label) { fontSize = 24, fontStyle = FontStyle.Bold };
         body.normal.textColor = new Color(1f, 0.92f, 0.6f);
 
         cue = new GUIStyle(GUI.skin.label) { fontSize = 40, fontStyle = FontStyle.Bold };
@@ -244,12 +271,12 @@ public sealed class VideoRunnerHud : MonoBehaviour
             top = box.yMax + 8f;
         }
 
-        GUI.Label(new Rect(18, top, 600, 34), scoreText, heading);
-
-        if (showDebug)
+        if (!string.IsNullOrEmpty(gpsText))
         {
-            GUI.Label(new Rect(18, top + 38f, 600, 24), statusText, body);
-            GUI.Label(new Rect(18, top + 60f, 860, 24), Controls, body);
+            Vector2 size = body.CalcSize(new GUIContent(gpsText));
+            var box = new Rect(14f, top, size.x + 20f, size.y + 10f);
+            GUI.DrawTexture(box, chip);
+            GUI.Label(new Rect(box.x + 10f, box.y + 5f, size.x, size.y), gpsText, body);
         }
 
         DrawUpcomingCue();
