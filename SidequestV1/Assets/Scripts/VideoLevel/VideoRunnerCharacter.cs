@@ -66,6 +66,12 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     [Tooltip("Ground line heights, normalized, that map to far and near scale.")]
     [SerializeField] Vector2 depthRange = new Vector2(0.45f, 0.95f);
 
+    [Header("Cue warning")]
+    [Tooltip("Seconds before each playable cue that the ball starts blinking red.")]
+    // A constant, not the cue's authored lead: the blink is the player's
+    // metronome, and it only teaches timing if every cue gives the same notice.
+    [SerializeField] float warningLead = 0.75f;
+
     [Header("Smoothing")]
     [Tooltip("Seconds for the character to settle onto a change in the ground line.")]
     // The path is smoothed when authored, but the ball still benefits from a
@@ -102,6 +108,10 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     int cleared;
     int missed;
     string lastOutcome = string.Empty;
+
+    // The scored cue whose motion is playing or imminent; the ball holds
+    // solid green until it lands.
+    EventState greenSource;
 
     public Stance CurrentStance => stance;
     public int Cleared => cleared;
@@ -175,6 +185,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
         UpdateStance(videoDelta, hidden);
         UpdateEvents(distance, hidden);
+        UpdateWarning(hidden);
         UpdateTransform(distance);
     }
 
@@ -227,6 +238,9 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             if (Mathf.Abs(videoTime - state.Event.time) <= half)
             {
                 state.Scored = true;
+                // Green the instant the press lands, not when the window
+                // closes - and held for the whole motion the press bought.
+                greenSource = state;
                 return;
             }
         }
@@ -374,12 +388,89 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                 missed++;
                 // The miss is shown on the ball itself: it flashes red while
                 // the scheduled motion carries on regardless.
-                view?.Flash(0.6f);
+                view?.Flash(0.6f, false);
             }
 
             lastOutcome = $"{(success ? "CLEAR" : "MISS")}  {state.Event.label}";
             EventResolved?.Invoke(state.Event, success);
         }
+    }
+
+    /// <summary>
+    /// Blink the ball red for a constant lead before each cue the player must
+    /// play - the wordless replacement for the on-screen JUMP/DODGE prompt.
+    /// </summary>
+    /// <remarks>
+    /// The blink starts <see cref="warningLead"/> seconds ahead and holds
+    /// through the press window until the cue is scored or resolved, so it
+    /// ends either in the held green of a landed press or the red flash of a
+    /// miss. The strength is urgency, 0 at the far edge of the lead and 1 at
+    /// the cue itself; the view blinks faster as it rises. Hidden spans
+    /// auto-clear their cues, so nothing blinks there.
+    /// </remarks>
+    void UpdateWarning(bool hidden)
+    {
+        float warn = 0f;
+        if (!hidden)
+        {
+            float videoTime = director.VideoTime;
+            for (int i = 0; i < states.Count; i++)
+            {
+                EventState state = states[i];
+                if (state.Resolved || state.Scored || state.Type == VideoLevelEventType.Hop)
+                {
+                    continue;
+                }
+
+                float gap = state.Event.time - videoTime;
+                if (gap <= warningLead)
+                {
+                    // Past the cue with the window still open counts as
+                    // maximum urgency, courtesy of the clamp.
+                    warn = Mathf.Clamp01(1f - gap / warningLead);
+                    break;
+                }
+            }
+        }
+
+        view?.SetWarning(warn);
+        view?.SetClearHold(ClearHoldStrength(hidden));
+    }
+
+    /// <summary>
+    /// 1 while a scored cue's motion is playing or imminent, else 0: how much
+    /// of the "you got it" green the ball should hold this frame.
+    /// </summary>
+    float ClearHoldStrength(bool hidden)
+    {
+        if (greenSource == null)
+        {
+            return 0f;
+        }
+
+        if (hidden)
+        {
+            greenSource = null;
+            return 0f;
+        }
+
+        // Pressed early, inside the window but before the choreography fires:
+        // the green starts at the press and rides into the motion.
+        if (!greenSource.Started)
+        {
+            return 1f;
+        }
+
+        bool playing = greenSource.Type == VideoLevelEventType.Dodge
+            ? stance == Stance.Dodging
+            : stance == Stance.Airborne;
+        if (!playing)
+        {
+            greenSource = null;
+            return 0f;
+        }
+
+        return 1f;
     }
 
     void StartScheduledJump(VideoLevelEvent cue)
@@ -645,6 +736,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         dodgeElapsed = -1f;
         stance = Stance.Grounded;
         lastOutcome = string.Empty;
+        greenSource = null;
         smoothedGround = -1f;
         smoothedColumn = -1f;
         takeOffGround = -1f;

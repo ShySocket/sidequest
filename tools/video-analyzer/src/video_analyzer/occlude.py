@@ -115,6 +115,16 @@ admits the fastest genuine mover measured (the 41.5s near pole, 0.16 between
 sightings).
 """
 
+MAX_SHAPE_RATIO = 1.6
+"""How much taller one sighting may be than the next and still chain.
+
+Centre continuity alone chained a thin background pole (box height 0.35)
+into the full-height near pole (1.0) that happened to sweep through the same
+x at 41.3s - and the game then morphed one into the other. A real object's
+box height changes little in a sixth of a second; a jump past this ratio is
+a different object standing in the same place.
+"""
+
 DODGE_SUPPRESS_BEFORE = 0.25
 DODGE_SUPPRESS_AFTER = 1.0
 """Window around a dodge cue where occlusion is suppressed.
@@ -154,6 +164,7 @@ class OcclusionConfig:
     max_track_gap: float = MAX_TRACK_GAP
     max_center_speed: float = MAX_CENTER_SPEED
     max_center_step: float = MAX_CENTER_STEP
+    max_shape_ratio: float = MAX_SHAPE_RATIO
     force_spans: tuple[tuple[float, float], ...] = ()
     suppress_spans: tuple[tuple[float, float], ...] = ()
 
@@ -320,6 +331,11 @@ def _group_tracks(
     tracks: list[OccluderTrack] = []
     current: OccluderTrack | None = None
 
+    def similar_shape(a: OccluderSample, b: OccluderSample) -> bool:
+        height_a = max(a.y2 - a.y1, 1e-6)
+        height_b = max(b.y2 - b.y1, 1e-6)
+        return max(height_a, height_b) <= config.max_shape_ratio * min(height_a, height_b)
+
     for sample in samples:
         chains = (
             current is not None
@@ -327,6 +343,7 @@ def _group_tracks(
             and (gap := sample.time - current.samples[-1].time) <= config.max_track_gap
             and abs(sample.center - current.samples[-1].center)
             <= min(config.max_center_speed * max(gap, 1e-6), config.max_center_step)
+            and similar_shape(sample, current.samples[-1])
         )
         if not chains:
             current = OccluderTrack(id=len(tracks) + 1, label=sample.label)
@@ -580,8 +597,103 @@ def strip_at(distance: float, entries: list[dict], total_distance: float):
     if nearest < 0 or gap > edge_hold(nearest):
         return None
 
+    # Carry the track's own velocity through the hold rather than freezing:
+    # a near pole sweeps a tenth of the screen in a detection interval, and a
+    # frozen box left its silhouette biting the ball where the pole no longer
+    # was (the 41.6s complaint). The interior same-id neighbour supplies the
+    # velocity; a track edge with none stays frozen, which the ball-overlap
+    # gate then bounds.
     sample = entries[nearest]
-    return (sample["x1"], sample["y1"], sample["x2"], sample["y2"]), sample
+    interior = nearest - 1 if distance > sample["d"] else nearest + 1
+    box = [sample["x1"], sample["y1"], sample["x2"], sample["y2"]]
+    if 0 <= interior < len(entries) and entries[interior]["id"] == sample["id"]:
+        span = sample["d"] - entries[interior]["d"]
+        if abs(span) > 1e-6:
+            overshoot = (distance - sample["d"]) / span
+            box = [
+                min(max(value + (value - entries[interior][key]) * overshoot, 0.0), 1.0)
+                for value, key in zip(box, ("x1", "y1", "x2", "y2"))
+            ]
+    return tuple(box), sample
+
+
+def _truth_boxes(
+    detection_frames: list[DetectionFrame],
+    det_times: np.ndarray,
+    det_size: tuple[int, int],
+    time: float,
+    labels: tuple[str, ...],
+) -> list[tuple[float, float, float, float]]:
+    """Where occluder-class objects actually are at ``time``, with slack.
+
+    Between detection frames a fast near object moves visibly, so a box is
+    matched to its counterpart in the bracketing frame (same label, nearest
+    centre) and POSITION-INTERPOLATED to the queried instant, with a tight
+    slack. Boxes with no counterpart fall back to their own frame's position
+    with a looser slack. Nearest-frame truth alone let a mask frozen a tenth
+    of a second stale pass as "on the object" - the 41.6s pole moved a tenth
+    of the screen in that time.
+    """
+    det_w, det_h = det_size
+    after = int(np.searchsorted(det_times, time))
+    before = after - 1
+    frames: list[tuple[float, list]] = []
+    for index in (before, after):
+        if 0 <= index < len(detection_frames) and abs(det_times[index] - time) <= 0.2:
+            frames.append(
+                (
+                    float(det_times[index]),
+                    [d for d in detection_frames[index].detections if d.label in labels],
+                )
+            )
+
+    if not frames:
+        return []
+
+    def normalized(box):
+        x1, y1, x2, y2 = box
+        return x1 / det_w, y1 / det_h, x2 / det_w, y2 / det_h
+
+    truth: list[tuple[float, float, float, float]] = []
+    if len(frames) == 2 and frames[1][0] > frames[0][0]:
+        (t0, dets0), (t1, dets1) = frames
+        alpha = (time - t0) / (t1 - t0)
+        used1: set[int] = set()
+        for det in dets0:
+            x1, y1, x2, y2 = normalized(det.box)
+            centre = 0.5 * (x1 + x2)
+            best_j, best_gap = -1, 0.14
+            for j, other in enumerate(dets1):
+                if j in used1 or other.label != det.label:
+                    continue
+                ox1, _, ox2, _ = normalized(other.box)
+                gap = abs(0.5 * (ox1 + ox2) - centre)
+                if gap < best_gap:
+                    best_j, best_gap = j, gap
+            if best_j >= 0:
+                used1.add(best_j)
+                ox1, oy1, ox2, oy2 = normalized(dets1[best_j].box)
+                truth.append(
+                    (
+                        x1 * (1 - alpha) + ox1 * alpha - 0.04,
+                        y1 * (1 - alpha) + oy1 * alpha - 0.04,
+                        x2 * (1 - alpha) + ox2 * alpha + 0.04,
+                        y2 * (1 - alpha) + oy2 * alpha + 0.04,
+                    )
+                )
+            else:
+                truth.append((x1 - 0.06, y1 - 0.06, x2 + 0.06, y2 + 0.06))
+        for j, other in enumerate(dets1):
+            if j not in used1:
+                x1, y1, x2, y2 = normalized(other.box)
+                truth.append((x1 - 0.06, y1 - 0.06, x2 + 0.06, y2 + 0.06))
+    else:
+        nearest = min(frames, key=lambda f: abs(f[0] - time))
+        for det in nearest[1]:
+            x1, y1, x2, y2 = normalized(det.box)
+            truth.append((x1 - 0.06, y1 - 0.06, x2 + 0.06, y2 + 0.06))
+
+    return truth
 
 
 def verify_occlusion(
@@ -708,18 +820,7 @@ def verify_occlusion(
             continue
         stats["frames_occluding"] += 1
 
-        index = int(np.argmin(np.abs(det_times - time)))
-        truth = []
-        if abs(det_times[index] - time) <= 0.1:
-            det_w, det_h = det_size
-            for det in detection_frames[index].detections:
-                if det.label not in labels:
-                    continue
-                bx1, by1, bx2, by2 = det.box
-                truth.append(
-                    (bx1 / det_w - 0.06, by1 / det_h - 0.06,
-                     bx2 / det_w + 0.06, by2 / det_h + 0.06)
-                )
+        truth = _truth_boxes(detection_frames, det_times, det_size, time, labels)
 
         cell = None
         if atlas is not None and sample.get("mask"):

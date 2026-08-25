@@ -171,12 +171,22 @@ the level file outward:
 The deeper game-side contract — *behind a real object, or invisible* — is
 checked by `analyze occluders --verify`, which mirrors the game's strip
 lookup 1:1 (interpolation within a track; past a track's end the last
-sighting may linger only **half its own sample spacing**; a ball-overlap
-gate) and rasterizes which ball pixels the silhouette actually erases,
-demanding each lie inside a current detection box. It also requires every
-atlas texel outside a silhouette cell to be black: black occludes nothing,
-and bilinear sampling bleeds cell borders into the strip, so anything else
-bites a clean-edged notch out of the ball with nothing visibly in front.
+sighting may linger only **half its own sample spacing**, and it travels
+along the track's own velocity rather than freezing — a frozen box left the
+silhouette biting the ball where a fast near pole no longer was; a
+ball-overlap gate) and rasterizes which ball pixels the silhouette actually
+erases, demanding each lie inside a current detection box —
+position-interpolated between the bracketing detection frames, because
+nearest-frame truth let a mask a tenth of a second stale pass as "on the
+object". It also requires every atlas texel outside a silhouette cell to be
+black: black occludes nothing, and bilinear sampling bleeds cell borders into
+the strip, so anything else bites a clean-edged notch out of the ball with
+nothing visibly in front.
+
+Track chaining requires shape continuity as well as centre continuity
+(`MAX_SHAPE_RATIO`): a thin background pole and a full-height near pole
+sweeping through the same x chained on centre alone, and the game morphed
+one into the other.
 
 Derivation-side rules the audit leans on: elevated surfaces (`rail`, `hedge`)
 suppress occlusion entirely — furniture the designer put the ball on lines the
@@ -207,5 +217,6 @@ widens the class list per clip.
 | REACH | 0.25 fw | strip is invisible anyway; wide reach keeps fast near poles trackable |
 | MAX_CENTER_STEP | 0.18 fw | fastest genuine mover measured was 0.16 between sightings |
 | MIN_TRACK_SECONDS | 0.15 s | two sightings at detection stride 5 |
+| MAX_SHAPE_RATIO | 1.6 | box height barely changes in a sixth of a second; a jump past this is a different object |
 
 fh = frame heights, fw = frame widths, obh = obstacle height above ground.

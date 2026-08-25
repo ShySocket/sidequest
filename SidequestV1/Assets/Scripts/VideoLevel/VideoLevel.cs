@@ -326,8 +326,30 @@ public sealed class VideoLevel
             return false;
         }
 
+        // Carry the track's own velocity through the hold rather than
+        // freezing: a near pole sweeps a tenth of the screen per detection
+        // interval, and a frozen box left its silhouette biting the ball
+        // where the pole no longer was (the 41.6s complaint). The interior
+        // same-id neighbour supplies the velocity; a track with none stays
+        // frozen, which the ball-overlap gate then bounds.
         VideoLevelForegroundBox held = samples[nearest];
-        box = Rect.MinMaxRect(held.x1, held.y1, held.x2, held.y2);
+        float heldX1 = held.x1, heldY1 = held.y1, heldX2 = held.x2, heldY2 = held.y2;
+        int interior = distance > held.d ? nearest - 1 : nearest + 1;
+        if (interior >= 0 && interior < samples.Count && samples[interior].id == held.id)
+        {
+            VideoLevelForegroundBox neighbour = samples[interior];
+            float span = held.d - neighbour.d;
+            if (Mathf.Abs(span) > 1e-6f)
+            {
+                float overshoot = (distance - held.d) / span;
+                heldX1 = Mathf.Clamp01(heldX1 + (heldX1 - neighbour.x1) * overshoot);
+                heldY1 = Mathf.Clamp01(heldY1 + (heldY1 - neighbour.y1) * overshoot);
+                heldX2 = Mathf.Clamp01(heldX2 + (heldX2 - neighbour.x2) * overshoot);
+                heldY2 = Mathf.Clamp01(heldY2 + (heldY2 - neighbour.y2) * overshoot);
+            }
+        }
+
+        box = Rect.MinMaxRect(heldX1, heldY1, heldX2, heldY2);
         hasMask = held.mask != 0;
         maskUv = Rect.MinMaxRect(held.u1, held.v1, held.u2, held.v2);
         return true;

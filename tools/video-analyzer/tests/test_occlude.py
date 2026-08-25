@@ -171,6 +171,28 @@ def test_strip_dies_immediately_past_the_track_edge():
     assert strip_at(95.1, TRACK, 10000.0) is not None
 
 
+def test_edge_hold_extrapolates_along_track_motion():
+    # The track moves x1 +0.02 per 10d. Inside the hold past either end the
+    # box must continue along that motion, not freeze: a frozen box left the
+    # silhouette biting the ball where the pole no longer was.
+    box, _ = strip_at(125.0, TRACK, 10000.0)
+    assert box[0] == pytest.approx(0.34 + 0.02 * 0.5, abs=1e-6)
+    box, _ = strip_at(95.1, TRACK, 10000.0)
+    assert box[0] == pytest.approx(0.30 - 0.02 * 0.49, abs=1e-3)
+
+
+def test_shape_jump_splits_tracks():
+    # A thin background pole and a full-height near pole sweeping through the
+    # same x chain on centre continuity alone - the 41.3s chimera. The height
+    # ratio gate must split them into two objects.
+    thin = frames_with_pole(np.arange(1.0, 1.5, 0.17), x=0.38, base_y=0.7, top_y=0.5)
+    tall = frames_with_pole(np.arange(1.67, 2.2, 0.17), x=0.40, base_y=0.95, top_y=0.05)
+    frames = sorted(thin + tall, key=lambda f: f.time)
+    tracks = derive(frames)
+    assert len(tracks) == 2
+    assert tracks[0].samples[-1].time < 1.6 < tracks[1].samples[0].time
+
+
 def test_strip_never_bridges_two_objects():
     entries = TRACK + [
         {"d": 400.0, "id": 2, "x1": 0.7, "y1": 0.2, "x2": 0.74, "y2": 0.9},

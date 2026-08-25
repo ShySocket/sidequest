@@ -113,6 +113,23 @@ public sealed class VideoRunnerBallView : MonoBehaviour
 
     float flashUntil = -1f;
     float flashDuration = 1f;
+    bool flashIsClear;
+    float warnStrength;
+    float clearHold;
+
+    // Light and albedo pairs for the verdict tints. Light colours run hot
+    // (above 1) so the tint survives multiplication with shade.
+    static readonly Color MissLight = new Color(2.2f, 0.25f, 0.2f);
+    static readonly Color MissAlbedo = new Color(0.8f, 0.04f, 0.03f);
+    static readonly Color ClearLight = new Color(0.35f, 2.1f, 0.5f);
+    static readonly Color ClearAlbedo = new Color(0.04f, 0.65f, 0.12f);
+
+    // Blink rate of the input warning, full cycles per second, ramping from
+    // the far edge of the lead to the cue itself - the quickening is what
+    // tells the player how close the moment is.
+    const float WarnBlinkHzFar = 2f;
+    const float WarnBlinkHzNear = 6f;
+    float warnPhase;
 
     // The disappearance poof: a soft puff that expands and fades where the
     // ball just was, so vanishing into a hidden span reads as an exit rather
@@ -137,8 +154,35 @@ public sealed class VideoRunnerBallView : MonoBehaviour
     /// <summary>Flash the ball red: the visible verdict for a missed cue.</summary>
     public void Flash(float duration)
     {
+        Flash(duration, false);
+    }
+
+    /// <summary>Flash the verdict on the ball: green for a cleared cue, red for a miss.</summary>
+    public void Flash(float duration, bool clear)
+    {
         flashDuration = Mathf.Max(duration, 0.05f);
         flashUntil = Time.time + flashDuration;
+        flashIsClear = clear;
+    }
+
+    /// <summary>
+    /// Strength of the input warning, 0..1. While above zero the ball blinks
+    /// red: the wordless "press now" that replaced the on-screen prompt.
+    /// The character sets it every frame, zero included.
+    /// </summary>
+    public void SetWarning(float strength)
+    {
+        warnStrength = Mathf.Clamp01(strength);
+    }
+
+    /// <summary>
+    /// Strength of the cleared-cue hold, 0..1. While above zero the ball is
+    /// solid green: the press landed and the jump or dodge it bought is
+    /// playing out. The character sets it every frame, zero included.
+    /// </summary>
+    public void SetClearHold(float strength)
+    {
+        clearHold = Mathf.Clamp01(strength);
     }
 
     public void Apply(in Pose pose, float deltaTime)
@@ -178,6 +222,13 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         wasAirborne = airborne;
         squash = Mathf.MoveTowards(squash, 0f, landingRecovery * deltaTime * Mathf.Max(squash, 0.1f));
 
+        // The blink accelerates as urgency rises; integrating a phase keeps
+        // the pulse continuous while its rate changes, where deriving it from
+        // the clock would make every rate change jump mid-pulse.
+        warnPhase = warnStrength > 0f
+            ? warnPhase + deltaTime * Mathf.Lerp(WarnBlinkHzFar, WarnBlinkHzNear, warnStrength)
+            : 0f;
+
         UpdateBall(pose, radius, deltaTime);
         UpdateShadow(pose);
         UpdateLighting(pose);
@@ -202,18 +253,44 @@ public sealed class VideoRunnerBallView : MonoBehaviour
 
         Color ambient = pose.Ambient.a > 0f ? pose.Ambient : Color.white;
 
-        // The miss flash pulls the light toward red, and - because a black
-        // albedo reflects almost nothing whatever colour the light is - the
-        // albedo itself as well. Specular and rim stay alive, so it reads as
-        // the ball burning red rather than being swapped for a red one.
+        // A verdict flash pulls the light toward its colour, and - because a
+        // black albedo reflects almost nothing whatever colour the light is -
+        // the albedo itself as well. Specular and rim stay alive, so it reads
+        // as the ball burning red or green rather than being swapped out.
         float flash = Mathf.Clamp01((flashUntil - Time.time) / flashDuration);
-        if (flash > 0f)
+        Color tintLight = flashIsClear ? ClearLight : MissLight;
+        Color tintAlbedo = flashIsClear ? ClearAlbedo : MissAlbedo;
+        float tint = flash;
+
+        // The cleared-cue hold keeps the ball solid green for the whole jump
+        // or dodge the press bought. A verdict flash still outranks it, so a
+        // neighbouring cue's red miss is never painted over.
+        if (flash <= 0f && clearHold > 0f)
         {
-            ambient = Color.Lerp(ambient, new Color(2.2f, 0.25f, 0.2f), flash * 0.85f);
+            tint = clearHold;
+            tintLight = ClearLight;
+            tintAlbedo = ClearAlbedo;
+        }
+        // The pre-cue warning blinks the same red machinery on and off. A
+        // verdict outranks it, so the instant a press lands the blink gives
+        // way to solid green.
+        else if (flash <= 0f && warnStrength > 0f)
+        {
+            float pulse = 0.5f - 0.5f * Mathf.Cos(warnPhase * 2f * Mathf.PI);
+            // Deepening a little alongside the quickening, but starting well
+            // above zero so the first pulse already reads.
+            tint = pulse * (0.55f + 0.45f * warnStrength);
+            tintLight = MissLight;
+            tintAlbedo = MissAlbedo;
+        }
+
+        if (tint > 0f)
+        {
+            ambient = Color.Lerp(ambient, tintLight, tint * 0.85f);
         }
 
         float luma = ambient.r * 0.299f + ambient.g * 0.587f + ambient.b * 0.114f;
-        if (flash <= 0f
+        if (tint <= 0f
             && Mathf.Abs(luma - appliedLuma) < 0.02f
             && Mathf.Abs(ambient.r - appliedAmbient.r) < 0.02f
             && Mathf.Abs(ambient.b - appliedAmbient.b) < 0.02f)
@@ -236,8 +313,7 @@ public sealed class VideoRunnerBallView : MonoBehaviour
             baseSpecStrength = material.GetFloat(SpecStrengthId);
         }
 
-        material.SetColor(
-            BaseColorId, Color.Lerp(baseBase, new Color(0.8f, 0.04f, 0.03f), flash));
+        material.SetColor(BaseColorId, Color.Lerp(baseBase, tintAlbedo, tint));
         material.SetColor(LightColorId, baseLight * ambient);
         material.SetColor(SkyColorId, baseSky * ambient);
         material.SetColor(GroundColorId, baseGround * ambient);

@@ -11,8 +11,6 @@ using UnityEngine.InputSystem;
 /// </remarks>
 public sealed class VideoRunnerHud : MonoBehaviour
 {
-    const float UpcomingSeconds = 1.2f;
-
     [SerializeField] LevelDirector director;
     [SerializeField] VideoRunnerCharacter character;
 
@@ -32,8 +30,6 @@ public sealed class VideoRunnerHud : MonoBehaviour
     const float TextRefreshInterval = 0.1f;
     float textRefreshedAt = -1f;
     string gpsText = string.Empty;
-    string cueText;
-    float cueAlpha;
 
     // Unlike the rest of the HUD this is rebuilt every frame rather than ten
     // times a second: it is the instrument used to write down when something
@@ -128,40 +124,6 @@ public sealed class VideoRunnerHud : MonoBehaviour
         timerText = fps > 0f
             ? $"{director.VideoTime:0.00}s   f{director.VideoTime * fps:0}"
             : $"{director.VideoTime:0.00}s";
-
-        // The upcoming-cue scan has to run every frame or the prompt lags, but
-        // it is a walk over a short list, not string work.
-        cueText = null;
-        VideoLevelEvent next = null;
-        float bestGap = float.MaxValue;
-        foreach (VideoLevelEvent entry in director.Level.Events)
-        {
-            // Hops are choreography the player never plays; prompting for one
-            // would teach a press that scores nothing.
-            if (VideoLevelEventTypes.Parse(entry.type) == VideoLevelEventType.Hop)
-            {
-                continue;
-            }
-
-            float gap = entry.time - director.VideoTime;
-            if (gap >= 0f && gap < bestGap)
-            {
-                bestGap = gap;
-                next = entry;
-            }
-        }
-
-        // Each cue carries its own warning lead (~0.55s); the old fixed 1.2s
-        // was annotated as arriving way too soon.
-        float lead = next != null && next.lead > 0f ? next.lead : UpcomingSeconds;
-        if (next != null && bestGap <= lead)
-        {
-            string action = VideoLevelEventTypes.Parse(next.type) == VideoLevelEventType.Dodge
-                ? "DODGE"
-                : "JUMP";
-            cueText = $"{action}  ({next.label})";
-            cueAlpha = Mathf.Clamp01(1f - bestGap / lead);
-        }
 
         if (Time.unscaledTime - textRefreshedAt < TextRefreshInterval)
         {
@@ -279,25 +241,12 @@ public sealed class VideoRunnerHud : MonoBehaviour
             GUI.Label(new Rect(box.x + 10f, box.y + 5f, size.x, size.y), gpsText, body);
         }
 
-        DrawUpcomingCue();
         DrawOutcome();
 
         if (director.IsFinished)
         {
             GUI.Label(new Rect(0, Screen.height * 0.42f, Screen.width, 60), "RUN COMPLETE", cue);
         }
-    }
-
-    void DrawUpcomingCue()
-    {
-        if (string.IsNullOrEmpty(cueText))
-        {
-            return;
-        }
-
-        // Fade in as the cue approaches, so the prompt reads as urgency.
-        cue.normal.textColor = new Color(1f, 1f, 1f, cueAlpha);
-        GUI.Label(new Rect(0, Screen.height * 0.22f, Screen.width, 60), cueText, cue);
     }
 
     void DrawOutcome()

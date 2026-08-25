@@ -209,6 +209,18 @@ public class VideoLevelTests
     }
 
     [Test]
+    public void ForegroundEdgeHoldExtrapolatesAlongTrackMotion()
+    {
+        VideoLevel level = VideoLevel.Parse(ForegroundJson);
+
+        // Track 1 moves x1 by +0.02 per 0.5d. Inside the hold past its end
+        // the box must continue along that motion rather than freeze - a
+        // frozen box bit the ball where the pole no longer was.
+        Assert.That(level.TryGetForeground(40.7f, out Rect box, out _, out _), Is.True);
+        Assert.That(box.xMin, Is.EqualTo(0.32f + 0.02f * 0.4f).Within(1e-3f));
+    }
+
+    [Test]
     public void ForegroundDiesImmediatelyPastTheTrackEdge()
     {
         VideoLevel level = VideoLevel.Parse(ForegroundJson);
