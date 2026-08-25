@@ -515,11 +515,17 @@ class LevelAuditor:
                 for box in self.obstacle_boxes(time):
                     if box["x2"] < column - radius or box["x1"] > column + radius:
                         continue
-                    # Only obstacles standing at the ball's ground level. The
-                    # test is "reaches down to the ground", not "bottom near
-                    # the ground": a near van's box runs past the frame bottom,
-                    # and the old symmetric check filtered it out entirely.
-                    if box["y2"] < ground - 0.18:
+                    # Only obstacles IN THE BALL'S LANE owe the arc clearance.
+                    # The test is "reaches down to the ball's line" (a near
+                    # van's box runs past the frame bottom, so the old
+                    # symmetric check filtered it out entirely) - and by the
+                    # same depth rule the whole pipeline uses (the overlap
+                    # check's "ball in front of it" test, occlude.py's
+                    # DEPTH_MARGIN), a base more than 0.03 ABOVE the line
+                    # stands beyond the lane: the ball passes in front of it,
+                    # and demanding lift over it flagged the 44.7 chain hop
+                    # for not vaulting a parked car two ranks behind the ball.
+                    if box["y2"] < ground - 0.03:
                         continue
                     # Behind a shipped occluder strip: the ball passes behind
                     # this object, the arc does not vault it.

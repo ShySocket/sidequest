@@ -21928,6 +21928,21 @@
    "id": 16,
    "type": "jump",
    "label": "chain",
+   "time": 44.7,
+   "distance": 21369.922,
+   "window": 0.7,
+   "height": 0.25,
+   "airTime": 1.2,
+   "windowSeconds": 0.7,
+   "lead": 0.9,
+   "duration": 0.0,
+   "source": "timeline",
+   "windowDistance": 112.228
+  },
+  {
+   "id": 17,
+   "type": "jump",
+   "label": "chain",
    "time": 47.05,
    "distance": 22156.487,
    "window": 0.7,
@@ -21940,7 +21955,7 @@
    "windowDistance": 124.026
   },
   {
-   "id": 17,
+   "id": 18,
    "type": "dodge",
    "label": "stop sign",
    "time": 57.32,
@@ -21955,7 +21970,7 @@
    "windowDistance": 265.957
   },
   {
-   "id": 18,
+   "id": 19,
    "type": "jump",
    "label": "fence",
    "time": 77.0,
@@ -21970,7 +21985,7 @@
    "windowDistance": 174.524
   },
   {
-   "id": 19,
+   "id": 20,
    "type": "dodge",
    "label": "sign",
    "time": 82.0,

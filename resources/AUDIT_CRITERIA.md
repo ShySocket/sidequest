@@ -59,12 +59,16 @@ takeoff) and the cue carries its drawn `airTime`:
 - Ownership: the cue owns boxes crossing the column within **±0.55 s of the
   drawn peak**. A pole most of a second away is a different object.
 - Candidate boxes: non-surface classes, overlapping the ball's x-extent,
-  reaching down to within 0.18 of the ball's ground (things standing in its
-  path; a near van's box runs past the frame bottom and still counts). A box a
-  shipped occluder strip covers is exempt — the ball passes *behind* it by
-  design (the near lamppost sweeping the 40.71 s arc). Occlusion is the
-  exemption, not depth alone: the 9.45 s van ships no strip and must be
-  cleared for real.
+  whose base reaches down to the ball's line (a near van's box runs past the
+  frame bottom and still counts). A base more than **0.03 above the line**
+  stands beyond the ball's lane — the same depth constant the overlap check
+  and `occlude.py` use — and owes the arc nothing: the ball passes in front
+  of it (a 0.18 tolerance here demanded the 44.7 s chain hop vault a parked
+  car two ranks behind the ball). This exempts only *farther* objects; for
+  nearer ones occlusion is the exemption, not depth alone — a box a shipped
+  occluder strip covers is exempt because the ball passes *behind* it by
+  design (the near lamppost sweeping the 40.71 s arc), while the 9.45 s van
+  ships no strip and must be cleared for real.
 - The flight is ONE parabola in screen space — take-off point to landing
   point, peaking `height` above the take-off line, **constant** acceleration
   `g = (√(2h)+√(2(h+d)))²/T²` (for a flat landing this is the old `8h/T²`).
