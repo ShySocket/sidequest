@@ -182,12 +182,12 @@
    "_why": "the mid-lot bollard chain: takeoff as the chain reaches the ball (reads as jumping it at ~44.88, the annotated moment), one gravity-exact bound (2.44*sqrt(0.25)=1.22 >= 1.2) over both chain spans, landing 45.9 clear of the second bollard - a 0.9s arc touched down at 45.6 right as that bollard's chain anchor reached the ball's edge, and landing shorter drops into the chain's droop. The chain is undetected (too thin), so the rendered frames are the evidence."
   },
   {
-   "time": 47.05,
+   "time": 46.42,
    "type": "jump",
    "label": "chain",
-   "height": 0.12,
-   "airTime": 0.34,
-   "_why": "the FRONT chain - annotated as jumped at 47.05; the old 46.71 takeoff hopped the far one"
+   "height": 0.15,
+   "airTime": 0.95,
+   "_why": "the bollard-and-chain fence the ball runs INTO at 46.65 (user-circled frame): its near post crosses the ball's column 46.47-46.76 with its head at y 0.565 against a 0.552 ride line - a 0.013 sliver that read as the ball skimming the post. The old 47.05 hop popped 0.3s AFTER that post had gone by, over empty asphalt. Takeoff 46.42 is airborne (0.043 daylight) before the post touches the disk, crests 46.89 just past it, and the 0.95s bound (gravity-exact: 2.44*sqrt(0.15) = 0.945) carries the landing to 47.37 - past the chain trailing off that post to the left, which sweeps the column 46.8-47.35. One arc covers post and chain, so the front-chain hop is absorbed rather than needing a second beat"
   },
   {
    "time": 57.32,
