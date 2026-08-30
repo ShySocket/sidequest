@@ -21943,16 +21943,16 @@
    "id": 17,
    "type": "jump",
    "label": "chain",
-   "time": 47.05,
-   "distance": 22156.487,
+   "time": 46.42,
+   "distance": 21938.195,
    "window": 0.7,
-   "height": 0.12,
-   "airTime": 0.34,
+   "height": 0.15,
+   "airTime": 0.95,
    "windowSeconds": 0.7,
    "lead": 0.9,
    "duration": 0.0,
    "source": "timeline",
-   "windowDistance": 124.026
+   "windowDistance": 120.369
   },
   {
    "id": 18,
