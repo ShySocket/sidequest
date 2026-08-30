@@ -150,7 +150,7 @@ MonoBehaviour:
   m_EditorClassIdentifier: VehicleRunner.Runtime::LevelDirector
   levelFileName: IMG_3775.authored.json
   background: {fileID: 805882889}
-  playbackMode: 0
+  playbackMode: 2
   speedMultiplier: 1
   referenceGameSpeed: 6
   vehicleSpeedController: {fileID: 0}
@@ -435,6 +435,7 @@ MonoBehaviour:
   farScale: 0.72
   nearScale: 1.25
   depthRange: {x: 0.45, y: 0.95}
+  warningLead: 0.75
   groundSmoothing: 0.09
   columnSmoothing: 0.14
 --- !u!212 &1921300407
