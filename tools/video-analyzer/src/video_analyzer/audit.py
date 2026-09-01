@@ -51,6 +51,23 @@ DODGE_DEPTH_STEP = 0.09
 
 DODGE_DURATION = 0.55
 
+JUMP_WINDOW_LEAD = 0.35
+"""Seconds before takeoff that the interactive press window opens.
+
+Mirrors VideoRunnerCharacter.jumpWindowLead; the audit must gate like the
+game plays.
+"""
+
+CHAIN_SLACK = 0.05
+"""Grace on a chained press: a press mid-air on an authored arc banks the next
+cue as long as the arc lands within this of the cue's takeoff. Mirrors
+InteractiveJumpRules.ChainSlack."""
+
+CRASH_REACH = 0.3
+"""How close, in ball radii beyond touching, the named obstacle must come to
+the grounded ball for a no-input crash to read as caused rather than
+arbitrary."""
+
 COLUMN_WINDOW_PX = 30
 """Half-window of columns around the ball used when reading evidence lines."""
 
@@ -1033,12 +1050,124 @@ class LevelAuditor:
 
         return violations
 
+    def check_no_input_crash(self) -> list[Violation]:
+        """The interactive game's two input traces, checked against the frames.
+
+        Perfect play needs no new trace: an armed press fires the authored arc
+        at the authored moment, so the motion every other check audits IS the
+        perfect-play run. What those checks cannot see:
+
+        * **No-input honesty.** With no press the ball stays on the ground
+          line and the cue crashes the run at its deadline. That is only fair
+          if the named obstacle visibly reaches the grounded ball - a crash
+          with nothing on screen to blame reads as arbitrary punishment.
+        * **Feasibility.** A press arms while the ball can take off, or -
+          because the level chains arcs on purpose - while the ball rides an
+          authored arc that lands by the cue's takeoff. What nothing can arm
+          is a cue whose window closes while earlier choreography is still in
+          the air past the takeoff itself: that level is unwinnable at any
+          timing, which no amount of player skill can fix.
+        """
+        violations: list[Violation] = []
+        aspect = self.level["source"]["width"] / self.level["source"]["height"]
+
+        # Everything that puts the ball in the air, playable or not.
+        arcs: list[tuple[float, float]] = []
+        playable: list[dict] = []
+        for event in self.level["events"]:
+            if event["type"] in ("jump", "hop", "platform"):
+                _, duration = self.arc(
+                    event.get("height", 0.0), event.get("airTime", 0.0)
+                )
+                arcs.append((float(event["time"]), float(event["time"]) + duration))
+                if event["type"] != "hop":
+                    playable.append(event)
+
+        for event in playable:
+            takeoff = float(event["time"])
+
+            # Feasibility. The latest pressable moment is the takeoff itself,
+            # and a chained press covers an arc that lands by then - so only
+            # an earlier arc still airborne past the takeoff is unwinnable.
+            for other_takeoff, land in arcs:
+                if other_takeoff >= takeoff:
+                    continue
+                if land > takeoff + CHAIN_SLACK:
+                    violations.append(
+                        Violation(
+                            "no-input",
+                            other_takeoff,
+                            takeoff,
+                            land - takeoff,
+                            f"{event['label']}: the arc at {other_takeoff:.2f}s "
+                            f"is still airborne at this cue's {takeoff:.2f}s "
+                            "takeoff - even a chained press cannot arm it",
+                        )
+                    )
+
+            # Honesty: does the named obstacle actually reach the unjumped
+            # ball by the crash deadline?
+            classes: set[str] | None = None
+            label = str(event.get("label", "")).lower()
+            for keyword, mapped in self.OVERLAP_CLASSES:
+                if keyword in label:
+                    classes = (classes or set()) | mapped
+            if classes is None:
+                # An arc that names no obstacle clears nothing, so the game
+                # has nothing to crash it against - same stance as overlap.
+                continue
+
+            deadline = takeoff + max(event.get("windowSeconds", 0.0), 0.24) * 0.5
+            best_gap: float | None = None
+            for time in np.arange(
+                takeoff - JUMP_WINDOW_LEAD, deadline + 0.5 + 1e-6, 1.0 / FPS
+            ):
+                distance = self.distance_at(time)
+                ground = self.ground_at(distance)
+                column = self.column_at(distance)
+                diameter = self.diameter_at(distance)
+                ry = diameter * 0.5
+                rx = ry / aspect
+                cy = ground - ry
+
+                for box in self.obstacle_boxes(time, classes):
+                    # Standing farther than the ball: painted background.
+                    if box["y2"] < ground - 0.18:
+                        continue
+                    nx = float(np.clip(column, box["x1"], box["x2"]))
+                    ny = float(np.clip(cy, box["y1"], box["y2"]))
+                    gap = float(np.hypot((column - nx) / rx, (cy - ny) / ry)) - 1.0
+                    if best_gap is None or gap < best_gap:
+                        best_gap = gap
+
+            if best_gap is None:
+                # The named obstacle was never detected near the cue: nothing
+                # to measure against, so nothing to accuse.
+                continue
+
+            if best_gap > CRASH_REACH:
+                violations.append(
+                    Violation(
+                        "no-input",
+                        takeoff,
+                        deadline,
+                        best_gap,
+                        f"{event['label']}: unjumped, the nearest "
+                        f"{'/'.join(sorted(classes))} stays {best_gap:.2f} radii "
+                        "short of the grounded ball - the crash would blame "
+                        "nothing visible",
+                    )
+                )
+
+        return violations
+
     def run(self, timeline_path: Path | None = None) -> AuditResult:
         result = AuditResult()
         result.violations += self.check_support()
         result.violations += self.check_clearance(timeline_path)
         result.violations += self.check_overlap(timeline_path)
         result.violations += self.check_dodges()
+        result.violations += self.check_no_input_crash()
         result.violations += self.check_size()
         result.violations += self.check_script(timeline_path)
         result.violations += self.check_occlusion(timeline_path)

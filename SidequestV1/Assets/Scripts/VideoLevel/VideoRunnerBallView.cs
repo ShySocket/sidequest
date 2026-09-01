@@ -115,7 +115,9 @@ public sealed class VideoRunnerBallView : MonoBehaviour
     float flashDuration = 1f;
     bool flashIsClear;
     float warnStrength;
+    bool warnWindowOpen;
     float clearHold;
+    bool splatted;
 
     // Light and albedo pairs for the verdict tints. Light colours run hot
     // (above 1) so the tint survives multiplication with shade.
@@ -123,6 +125,15 @@ public sealed class VideoRunnerBallView : MonoBehaviour
     static readonly Color MissAlbedo = new Color(0.8f, 0.04f, 0.03f);
     static readonly Color ClearLight = new Color(0.35f, 2.1f, 0.5f);
     static readonly Color ClearAlbedo = new Color(0.04f, 0.65f, 0.12f);
+
+    // The "too early" stretch of the warning ramp: amber, not red. Red is
+    // reserved for verdicts, so the ramp reads coming -> now -> (clear|crash).
+    static readonly Color EarlyLight = new Color(2.1f, 1.35f, 0.15f);
+    static readonly Color EarlyAlbedo = new Color(0.75f, 0.45f, 0.02f);
+
+    // How flat the crash leaves the ball. Held, not recovered from: the run
+    // is over, and a ball that springs back reads as "keep playing".
+    const float SplatSquash = 0.55f;
 
     // Blink rate of the input warning, full cycles per second, ramping from
     // the far edge of the lead to the cue itself - the quickening is what
@@ -166,13 +177,49 @@ public sealed class VideoRunnerBallView : MonoBehaviour
     }
 
     /// <summary>
+    /// The crash: the ball flattens against what it hit, burns red, and stops
+    /// rolling. Held until <see cref="ResetVerdicts"/> - on the desk's frozen
+    /// impact frame a recovering, spinning ball would read as still alive.
+    /// </summary>
+    public void Splat()
+    {
+        splatted = true;
+        Flash(1.4f, false);
+    }
+
+    /// <summary>Clear every verdict and warning state, for a fresh run.</summary>
+    public void ResetVerdicts()
+    {
+        splatted = false;
+        flashUntil = -1f;
+        warnStrength = 0f;
+        warnWindowOpen = false;
+        clearHold = 0f;
+        squash = 0f;
+        warnPhase = 0f;
+    }
+
+    /// <summary>
     /// Strength of the input warning, 0..1. While above zero the ball blinks
     /// red: the wordless "press now" that replaced the on-screen prompt.
     /// The character sets it every frame, zero included.
     /// </summary>
     public void SetWarning(float strength)
     {
+        SetWarning(strength, false);
+    }
+
+    /// <summary>
+    /// The warning with its colour phase: while <paramref name="windowOpen"/>
+    /// the press window is live and the ball pulses green ("jump NOW");
+    /// before that it blinks amber ("coming - not yet"). The two also differ
+    /// by pattern - the amber blink reaches zero between pulses where the
+    /// green never falls below half - so the ramp survives colourblindness.
+    /// </summary>
+    public void SetWarning(float strength, bool windowOpen)
+    {
         warnStrength = Mathf.Clamp01(strength);
+        warnWindowOpen = windowOpen && warnStrength > 0f;
     }
 
     /// <summary>
@@ -220,7 +267,10 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         }
 
         wasAirborne = airborne;
-        squash = Mathf.MoveTowards(squash, 0f, landingRecovery * deltaTime * Mathf.Max(squash, 0.1f));
+        squash = splatted
+            ? SplatSquash
+            : Mathf.MoveTowards(
+                squash, 0f, landingRecovery * deltaTime * Mathf.Max(squash, 0.1f));
 
         // The blink accelerates as urgency rises; integrating a phase keeps
         // the pulse continuous while its rate changes, where deriving it from
@@ -271,17 +321,28 @@ public sealed class VideoRunnerBallView : MonoBehaviour
             tintLight = ClearLight;
             tintAlbedo = ClearAlbedo;
         }
-        // The pre-cue warning blinks the same red machinery on and off. A
-        // verdict outranks it, so the instant a press lands the blink gives
-        // way to solid green.
+        // The pre-cue warning blinks on and off. A verdict outranks it, so
+        // the instant a press lands the blink gives way to solid green.
         else if (flash <= 0f && warnStrength > 0f)
         {
             float pulse = 0.5f - 0.5f * Mathf.Cos(warnPhase * 2f * Mathf.PI);
-            // Deepening a little alongside the quickening, but starting well
-            // above zero so the first pulse already reads.
-            tint = pulse * (0.55f + 0.45f * warnStrength);
-            tintLight = MissLight;
-            tintAlbedo = MissAlbedo;
+            if (warnWindowOpen)
+            {
+                // The window is live: green, and never dropping below half
+                // so it cannot be mistaken for the amber blink's off-beat.
+                tint = 0.55f + 0.45f * pulse;
+                tintLight = ClearLight;
+                tintAlbedo = ClearAlbedo;
+            }
+            else
+            {
+                // Too early: amber. Deepening a little alongside the
+                // quickening, but starting well above zero so the first
+                // pulse already reads.
+                tint = pulse * (0.55f + 0.45f * warnStrength);
+                tintLight = EarlyLight;
+                tintAlbedo = EarlyAlbedo;
+            }
         }
 
         if (tint > 0f)
@@ -392,8 +453,13 @@ public sealed class VideoRunnerBallView : MonoBehaviour
         float degreesPerSecond =
             pose.ScreenSpeed / circumference * 360f * rollScale * surfaceRoll;
         // Heading is negated because rolling leftward is a positive rotation
-        // about the axis pointing out of the screen.
-        rollAngle += degreesPerSecond * deltaTime * -pose.Heading;
+        // about the axis pointing out of the screen. A splatted ball has
+        // stopped for good - the level's screen speed at the frozen frame is
+        // still nonzero, and integrating it would spin the wreck in place.
+        if (!splatted)
+        {
+            rollAngle += degreesPerSecond * deltaTime * -pose.Heading;
+        }
 
         // Fastest at take-off and landing, round at the apex.
         float stretch = Mathf.Clamp01(pose.VerticalSpeed01) * maxStretch;

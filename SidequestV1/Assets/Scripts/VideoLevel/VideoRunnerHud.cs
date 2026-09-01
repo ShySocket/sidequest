@@ -243,8 +243,22 @@ public sealed class VideoRunnerHud : MonoBehaviour
 
         DrawOutcome();
 
+        if (character.IsCrashed)
+        {
+            // A crash outranks RUN COMPLETE: in vehicle mode the footage
+            // rides to the end even after the splat, and finishing a run you
+            // crashed out of is not a completion.
+            cue.normal.textColor = new Color(1f, 0.35f, 0.3f);
+            bool canRestart = !character.IsSpectating || director.IsFinished;
+            GUI.Label(
+                new Rect(0, Screen.height * 0.42f, Screen.width, 60),
+                canRestart ? "CRASHED - TAP TO RESTART" : "CRASHED", cue);
+            return;
+        }
+
         if (director.IsFinished)
         {
+            cue.normal.textColor = Color.white;
             GUI.Label(new Rect(0, Screen.height * 0.42f, Screen.width, 60), "RUN COMPLETE", cue);
         }
     }

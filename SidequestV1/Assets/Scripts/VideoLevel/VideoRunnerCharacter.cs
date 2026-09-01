@@ -28,6 +28,21 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         Hidden
     }
 
+    public enum ControlMode
+    {
+        /// <summary>The player's press IS the jump; an unpressed cue crashes the run.</summary>
+        /// <remarks>
+        /// First in the enum on purpose: scenes saved before this mode existed
+        /// serialized 0, so they migrate to the interactive game rather than
+        /// silently pinning the old preview behaviour.
+        /// </remarks>
+        Interactive,
+
+        /// <summary>Every cue fires on schedule and a press only scores - the
+        /// authored-playback preview the tuning loop watches.</summary>
+        Choreographed
+    }
+
     [SerializeField] LevelDirector director;
     [SerializeField] VideoBackground background;
     [SerializeField] VideoRunnerBallView view;
@@ -72,6 +87,29 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     // metronome, and it only teaches timing if every cue gives the same notice.
     [SerializeField] float warningLead = 0.75f;
 
+    [Header("Interactive jumps")]
+    [Tooltip("Interactive: jump cues fire only on a press in the window, and an " +
+        "unpressed cue crashes the run. Choreographed: the authored preview.")]
+    [SerializeField] ControlMode controlMode = ControlMode.Interactive;
+
+    [Tooltip("Seconds before a cue's takeoff that a press counts: the green window.")]
+    // Shorter than the warning on purpose: the amber stretch in between is
+    // where a nervous early jump commits the ball and loses the run.
+    [SerializeField] float jumpWindowLead = 0.35f;
+
+    [Tooltip("Seconds after landing before the ball can take off again.")]
+    // What makes a too-early jump unrecoverable: without it, a panic jump at
+    // the warning lands in time to jump again, and mashing beats timing.
+    [SerializeField] float jumpCooldown = 0.45f;
+
+    [Tooltip("Seconds after a crash before a press restarts, so the splat is " +
+        "seen rather than swallowed by the tap that caused it.")]
+    [SerializeField] float restartLockout = 0.8f;
+
+    // Vehicle mode cannot freeze the footage (reality does not rewind), so the
+    // splat holds this long and then the ball puffs out and the ride continues.
+    const float SpectateHideDelay = 1.2f;
+
     [Header("Smoothing")]
     [Tooltip("Seconds for the character to settle onto a change in the ground line.")]
     // The path is smoothed when authored, but the ball still benefits from a
@@ -108,14 +146,37 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     int cleared;
     int missed;
     string lastOutcome = string.Empty;
+    bool crashed;
+    bool spectating;
+    float crashedAtWall;
+
+    // Only FREE-jump landings feed the cooldown clock: an authored arc was
+    // scheduled to be playable, so landing from one must never lock the next
+    // window. Free jumps are the sole self-inflicted state.
+    float lastLandingVideoTime = float.NegativeInfinity;
+    bool activeJumpIsFree;
+    float scheduledLandingTime;
 
     // The scored cue whose motion is playing or imminent; the ball holds
     // solid green until it lands.
     EventState greenSource;
 
     public Stance CurrentStance => stance;
+
+    /// <summary>A jump or dodge arc is mid-flight.</summary>
+    /// <remarks>
+    /// Arcs advance on video time, so whoever drives the video must not let
+    /// it freeze while this is true - a paused video hangs the ball mid-air.
+    /// </remarks>
+    public bool IsActionInProgress =>
+        stance == Stance.Airborne || stance == Stance.Dodging;
+
     public int Cleared => cleared;
     public int Missed => missed;
+    public bool IsCrashed => crashed;
+
+    /// <summary>Crashed in vehicle mode: the footage rides on without the ball.</summary>
+    public bool IsSpectating => spectating;
 
     /// <summary>Cues the player is asked to play - hops are choreography only.</summary>
     public int TotalEvents => scoredEventCount;
@@ -170,6 +231,24 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         ReadInput();
 
         float distance = director.Distance;
+
+        if (crashed)
+        {
+            // The run is over: no more cues, no more warnings. At a desk the
+            // director holds the impact frame and the splatted ball sits on
+            // it; in a vehicle the footage keeps riding, so once the splat
+            // has read the ball puffs out and the rest is spectated.
+            if (spectating && Time.time - crashedAtWall > SpectateHideDelay)
+            {
+                stance = Stance.Hidden;
+            }
+
+            view?.SetWarning(0f);
+            view?.SetClearHold(0f);
+            UpdateTransform(distance);
+            return;
+        }
+
         bool hidden = director.Level.IsHiddenAtDistance(distance);
 
         // Arcs advance in VIDEO time, not wall time. Takeoffs fire at video
@@ -214,17 +293,45 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
     void ReadInput()
     {
-        // Input no longer moves the character: the choreography is
-        // predetermined and identical on every playthrough. A press only
-        // scores - inside a cue's window it clears, otherwise the ball
-        // flashes red when the scheduled motion fires anyway.
-        if (WasJumpPressed() || WasDodgePressed())
+        bool jumpPressed = WasJumpPressed();
+
+        if (crashed)
         {
-            RegisterPress(director.VideoTime);
+            // At a desk a press past the lockout restarts from the top. In a
+            // vehicle the footage cannot rewind, so restarting only re-arms
+            // once the ride has played out.
+            bool canRestart = !spectating || director.IsFinished;
+            if (jumpPressed && canRestart && Time.time - crashedAtWall >= restartLockout)
+            {
+                director.Restart();
+                ResetRun();
+            }
+
+            return;
+        }
+
+        bool dodgePressed = WasDodgePressed();
+        if (!jumpPressed && !dodgePressed)
+        {
+            return;
+        }
+
+        // A press claims an open cue window first; only a press with no
+        // window to claim spends itself on a free jump. In Choreographed mode
+        // the press never moves the ball at all - it only scores, and the
+        // scheduled motion fires regardless.
+        if (RegisterPress(director.VideoTime))
+        {
+            return;
+        }
+
+        if (controlMode == ControlMode.Interactive && jumpPressed)
+        {
+            TryFreeJump();
         }
     }
 
-    void RegisterPress(float videoTime)
+    bool RegisterPress(float videoTime)
     {
         for (int i = 0; i < states.Count; i++)
         {
@@ -234,16 +341,80 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                 continue;
             }
 
-            float half = Mathf.Max(state.Event.windowSeconds, 0.24f) * 0.5f;
-            if (Mathf.Abs(videoTime - state.Event.time) <= half)
+            bool inWindow;
+            if (controlMode == ControlMode.Interactive
+                && state.Type != VideoLevelEventType.Dodge)
+            {
+                // The press IS the jump here, so it needs a ball that can
+                // take off - or one riding an authored arc that lands in
+                // time, for the chained cues. Airborne on a free jump, or
+                // still cooling down from one, the window passes unclaimed -
+                // that is the whole cost of jumping too early.
+                bool ready = InteractiveJumpRules.CanTakeOff(
+                        stance == Stance.Grounded,
+                        videoTime, lastLandingVideoTime, jumpCooldown)
+                    || InteractiveJumpRules.CanChainPress(
+                        stance == Stance.Airborne && !activeJumpIsFree,
+                        scheduledLandingTime, state.Event.time);
+                inWindow = ready && InteractiveJumpRules.IsWindowOpen(
+                    videoTime, state.Event.time, jumpWindowLead);
+            }
+            else
+            {
+                float half = Mathf.Max(
+                    state.Event.windowSeconds,
+                    InteractiveJumpRules.MinWindowSeconds) * 0.5f;
+                inWindow = Mathf.Abs(videoTime - state.Event.time) <= half;
+            }
+
+            if (inWindow)
             {
                 state.Scored = true;
                 // Green the instant the press lands, not when the window
                 // closes - and held for the whole motion the press bought.
                 greenSource = state;
-                return;
+                return true;
             }
         }
+
+        return false;
+    }
+
+    /// <summary>
+    /// A press with no cue window to claim: an ordinary jump, whenever the
+    /// player likes.
+    /// </summary>
+    /// <remarks>
+    /// It never clears anything - the authored arcs are the only ones fitted
+    /// to the footage - but it is a real, committed jump: airborne over the
+    /// wrong moment, or landed but still in cooldown when a window opens, is
+    /// how "jump at any time" loses runs.
+    /// </remarks>
+    void TryFreeJump()
+    {
+        if (stance != Stance.Grounded)
+        {
+            return;
+        }
+
+        // A banked cue press is about to take off on schedule; a second tap
+        // must not turn it into a mistimed free arc.
+        if (greenSource != null && !greenSource.Started)
+        {
+            return;
+        }
+
+        if (!InteractiveJumpRules.CanTakeOff(
+                true, director.VideoTime, lastLandingVideoTime, jumpCooldown))
+        {
+            return;
+        }
+
+        BeginJump(
+            Mathf.Clamp(jumpHeight, jumpHeightRange.x, jumpHeightRange.y),
+            0f,
+            director.VideoTime,
+            free: true);
     }
 
     static bool WasJumpPressed()
@@ -329,6 +500,15 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             airHeight = 0f;
             verticalVelocity = 0f;
             stance = Stance.Grounded;
+            // A free jump's landing starts the take-off cooldown; a scheduled
+            // arc's never does (see the fields above). Video time, like the
+            // arc itself: when the vehicle stops and the footage freezes,
+            // nothing is approaching either, so the clock and the danger
+            // pause together.
+            if (activeJumpIsFree)
+            {
+                lastLandingVideoTime = lastVideoTime;
+            }
         }
     }
 
@@ -344,8 +524,6 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                 continue;
             }
 
-            // The choreography fires at exactly the written time, every
-            // playthrough, whatever the player does.
             if (!state.Started && videoTime >= state.Event.time)
             {
                 state.Started = true;
@@ -355,10 +533,12 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                     activeDodgeDuration = state.Event.duration;
                     stance = Stance.Dodging;
                 }
-                else
+                else if (ChoreographyOwnsJump(state, hidden))
                 {
                     StartScheduledJump(state.Event);
                 }
+                // else: nobody pressed. The ball stays down, the obstacle
+                // keeps coming, and the crash lands at the deadline below.
 
                 // A hop is pure choreography: nothing to score, nothing to
                 // miss, no red flash, no entry in the tally.
@@ -369,10 +549,12 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                 }
             }
 
-            // Score once the window has fully passed, so a slightly-late press
-            // still counts.
-            float half = Mathf.Max(state.Event.windowSeconds, 0.24f) * 0.5f;
-            if (!state.Started || videoTime <= state.Event.time + half)
+            // Resolve once the window has fully passed - in Choreographed
+            // mode so a slightly-late press still counts, in Interactive so
+            // the unjumped ball visibly meets the obstacle before the verdict.
+            float deadline = InteractiveJumpRules.CrashDeadline(
+                state.Event.time, state.Event.windowSeconds);
+            if (!state.Started || videoTime <= deadline)
             {
                 continue;
             }
@@ -382,6 +564,14 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             if (success)
             {
                 cleared++;
+            }
+            else if (controlMode == ControlMode.Interactive
+                && state.Type != VideoLevelEventType.Dodge)
+            {
+                missed++;
+                Crash(state.Event);
+                EventResolved?.Invoke(state.Event, false);
+                return;
             }
             else
             {
@@ -394,6 +584,36 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
             lastOutcome = $"{(success ? "CLEAR" : "MISS")}  {state.Event.label}";
             EventResolved?.Invoke(state.Event, success);
         }
+    }
+
+    /// <summary>Does this jump cue fire on schedule, without a press?</summary>
+    /// <remarks>
+    /// The preview mode always does; hops are believability choreography the
+    /// player is never asked to play; a cue inside a hidden span auto-clears
+    /// today and must not demand a press at a ball that is not on screen; and
+    /// an armed press hands its cue back to the schedule so the arc starts at
+    /// the authored moment the footage was fitted to.
+    /// </remarks>
+    bool ChoreographyOwnsJump(EventState state, bool hidden)
+    {
+        return controlMode == ControlMode.Choreographed
+            || state.Type == VideoLevelEventType.Hop
+            || hidden
+            || state.Scored;
+    }
+
+    /// <summary>The unpressed cue's verdict: splat, and the run is over.</summary>
+    void Crash(VideoLevelEvent cue)
+    {
+        crashed = true;
+        crashedAtWall = Time.time;
+        // A vehicle cannot rewind the road, so there the footage rides on and
+        // the run is spectated out; at a desk the director freezes the impact
+        // frame and a press restarts from the top.
+        spectating = director.ResolvedMode == LevelDirector.PlaybackMode.VehicleSpeed;
+        lastOutcome = $"CRASH  {cue.label}";
+        director.NotifyCrash(spectating);
+        view?.Splat();
     }
 
     /// <summary>
@@ -411,6 +631,7 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
     void UpdateWarning(bool hidden)
     {
         float warn = 0f;
+        bool windowOpen = false;
         if (!hidden)
         {
             float videoTime = director.VideoTime;
@@ -428,12 +649,19 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
                     // Past the cue with the window still open counts as
                     // maximum urgency, courtesy of the clamp.
                     warn = Mathf.Clamp01(1f - gap / warningLead);
+                    // The green stretch of the ramp: only where a press
+                    // actually buys the jump. Dodges stay choreographed, so
+                    // their warning never turns green.
+                    windowOpen = controlMode == ControlMode.Interactive
+                        && state.Type != VideoLevelEventType.Dodge
+                        && InteractiveJumpRules.IsWindowOpen(
+                            videoTime, state.Event.time, jumpWindowLead);
                     break;
                 }
             }
         }
 
-        view?.SetWarning(warn);
+        view?.SetWarning(warn, windowOpen);
         view?.SetClearHold(ClearHoldStrength(hidden));
     }
 
@@ -475,17 +703,25 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
 
     void StartScheduledJump(VideoLevelEvent cue)
     {
-        // A jump interrupts whatever the ball was doing; the schedule owns it.
-        dodgeElapsed = -1f;
         // An authored cue is trusted rather than clamped to the tuned range:
         // its numbers were audited against the frames (the people at 24s take
         // more height than any tuned jump), and the tuned range lives in a
         // saved scene that would silently pin old limits. The wide clamp only
         // guards against a corrupt level file.
-        activeJumpHeight = cue.height > 0f
+        float height = cue.height > 0f
             ? Mathf.Clamp(cue.height, 0.05f, 0.8f)
             : Mathf.Clamp(jumpHeight, jumpHeightRange.x, jumpHeightRange.y);
-        activeAirTime = cue.airTime;
+        BeginJump(height, cue.airTime, cue.time, free: false);
+    }
+
+    /// <summary>Take off: the shared arc setup of scheduled and free jumps.</summary>
+    void BeginJump(float height, float cueAirTime, float takeOffTime, bool free)
+    {
+        // A jump interrupts whatever the ball was doing; the schedule owns it.
+        dodgeElapsed = -1f;
+        activeJumpHeight = height;
+        activeAirTime = cueAirTime;
+        activeJumpIsFree = free;
 
         // The arc is ONE parabola in screen space, from the take-off point to
         // the landing point, peaking `height` above the take-off line. Its
@@ -498,7 +734,10 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         takeOffGround = smoothedGround;
         takeOffSizeGround = smoothedSizeGround;
         float duration = Mathf.Max(ArcDuration(), 0.01f);
-        float landDistance = director.Level.DistanceAtTime(cue.time + duration);
+        // Known up front because the arc is deterministic; what lets a press
+        // chain onto the next cue while this arc is still in the air.
+        scheduledLandingTime = takeOffTime + duration;
+        float landDistance = director.Level.DistanceAtTime(takeOffTime + duration);
         // Never land above your own apex: a corrupt prediction would make the
         // square root below meaningless.
         arcDrop = Mathf.Max(
@@ -737,6 +976,12 @@ public sealed class VideoRunnerCharacter : MonoBehaviour
         stance = Stance.Grounded;
         lastOutcome = string.Empty;
         greenSource = null;
+        crashed = false;
+        spectating = false;
+        lastLandingVideoTime = float.NegativeInfinity;
+        activeJumpIsFree = false;
+        scheduledLandingTime = 0f;
+        view?.ResetVerdicts();
         smoothedGround = -1f;
         smoothedColumn = -1f;
         takeOffGround = -1f;
